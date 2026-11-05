@@ -727,6 +727,21 @@ await Test("a session refuses input and applies no commands until the world is l
     return Task.CompletedTask;
 });
 
+await Test("a late join keeps history commands that arrive after live ones", () =>
+{
+    var log = new CommandLog();
+    // Live command arrives first because the peer joined while others were already playing.
+    Check(log.Accept(new GameCommand(501, 900, "designation", [1])), "live command accepted");
+    Check(log.Accept(new GameCommand(401, 800, "designation", [2])), "older history still accepted");
+    Check(log.Accept(new GameCommand(400, 800, "designation", [3])), "history in any order");
+    Check(!log.Accept(new GameCommand(501, 900, "designation", [1])), "exact duplicate rejected");
+    var due = log.TakeThrough(1000);
+    Check(due.Count == 3, "nothing silently dropped");
+    Check(due.Select(c => c.Tick).SequenceEqual(new[] { 800, 800, 900 }), "applied in tick order");
+    Check(due[0].Sequence < due[1].Sequence, "same tick ordered by sequence");
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

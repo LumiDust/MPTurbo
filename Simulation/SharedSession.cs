@@ -19,19 +19,29 @@ public enum SharedPhase
 public sealed class CommandLog
 {
     private readonly List<GameCommand> _pending = [];
-    private long _lastSequence = -1;
+    private readonly HashSet<long> _seen = [];
+    private long _highest = -1;
+    private const int SeenWindow = 8192;
 
     public int Count => _pending.Count;
-    public long LastSequence => _lastSequence;
+    public long LastSequence => _highest;
 
-    /// <summary>Queue a server-issued command. Returns false for duplicates or non-monotonic input.</summary>
+    /// <summary>
+    /// Queue a server-issued command. Accepts late arrivals: a peer joining mid-session receives history
+    /// while live commands are already streaming, so arrival order is not the same as sequence order.
+    /// Only a command already accepted is rejected.
+    /// </summary>
     public bool Accept(GameCommand command)
     {
         ArgumentNullException.ThrowIfNull(command);
-        if (command.Sequence <= _lastSequence) return false;
-        if (command.Tick < 0) return false;
-        _lastSequence = command.Sequence;
-        // Keep deterministic order even if the transport delivers slightly out of order.
+        if (command.Tick < 0 || !_seen.Add(command.Sequence)) return false;
+        if (command.Sequence > _highest) _highest = command.Sequence;
+        if (_seen.Count > SeenWindow)
+        {
+            var floor = _highest - SeenWindow;
+            _seen.RemoveWhere(sequence => sequence < floor);
+        }
+        // Keep deterministic order (tick, then sequence) even when the transport delivers out of order.
         var index = _pending.Count;
         while (index > 0 && Compare(_pending[index - 1], command) > 0) index--;
         _pending.Insert(index, command);
@@ -50,7 +60,7 @@ public sealed class CommandLog
         return ready;
     }
 
-    public void Clear() { _pending.Clear(); _lastSequence = -1; }
+    public void Clear() { _pending.Clear(); _seen.Clear(); _highest = -1; }
 
     private static int Compare(GameCommand a, GameCommand b)
     {
