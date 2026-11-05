@@ -31,6 +31,9 @@ internal sealed record WireMessage
     public long Epoch { get; init; } = -1;
     public int Tick { get; init; }
     public int Seed { get; init; }
+    public int SnapshotTick { get; init; }
+    public bool Checkpoint { get; init; }
+    public bool? CheckpointOwner { get; init; }
     public string? WorldId { get; init; }
     public string? UploadId { get; init; }
     public int ChunkCount { get; init; }

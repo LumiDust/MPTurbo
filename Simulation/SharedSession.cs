@@ -88,10 +88,14 @@ public sealed class TickBarrier
         return true;
     }
 
-    public void Reset()
+    public void Reset() => Reset(0);
+
+    /// <summary>Jump to a checkpoint tick: the world snapshot already includes everything before it.</summary>
+    public void Reset(int startTick)
     {
-        Volatile.Write(ref _serverTick, 0);
-        Volatile.Write(ref _appliedTick, 0);
+        if (startTick < 0) throw new ArgumentOutOfRangeException(nameof(startTick));
+        Volatile.Write(ref _appliedTick, startTick);
+        Volatile.Write(ref _serverTick, startTick);
     }
 }
 

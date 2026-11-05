@@ -175,6 +175,34 @@ internal static class RoomConnection
         });
     }
 
+    public static bool IsCheckpointOwner => client?.IsCheckpointOwner == true;
+    private static int checkpointing;
+
+    /// <summary>Checkpoint owner: saves the colony at the current tick and publishes it so late joins replay less.</summary>
+    public static void PublishCheckpoint(int tick)
+    {
+        if (client?.IsConnected != true || !IsCheckpointOwner) return;
+        if (Interlocked.Exchange(ref checkpointing, 1) != 0) return;
+        var socket = client;
+        var id = generation;
+        var token = lifetime!.Token;
+        string path;
+        try { path = WorldFiles.SaveCurrentGame(); }
+        catch (Exception error) { Interlocked.Exchange(ref checkpointing, 0); Status = "检查点保存失败：" + error.Message; return; }
+        var bytes = File.ReadAllBytes(path);
+        var manifest = WorldFiles.Describe(bytes);
+        Track(Task.Run(async () =>
+        {
+            try
+            {
+                using var stream = new MemoryStream(bytes, writable: false);
+                await socket.CheckpointWorldAsync(manifest, stream, tick, token).ConfigureAwait(false);
+            }
+            catch (Exception error) { Post(id, () => Status = "检查点上传失败：" + error.Message); }
+            finally { Interlocked.Exchange(ref checkpointing, 0); }
+        }));
+    }
+
     public static Task SendCommand(string kind, byte[] payload, long sequence)
     {
         if (client?.IsConnected != true || !TurboState.Authority.SessionConnected) return Task.CompletedTask;

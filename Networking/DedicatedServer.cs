@@ -39,6 +39,12 @@ public sealed class DedicatedServer : IAsyncDisposable
     private readonly List<GameCommand> _history = [];
     private readonly ConcurrentDictionary<int, string> _firstHashAtTick = new();
     private readonly HashSet<int> _reportedDesyncTicks = [];
+    private long? _checkpointOwnerId;
+    private SnapshotManifest? _checkpointManifest;
+    private int _checkpointTick;
+
+    public int CheckpointTick => Volatile.Read(ref _checkpointTick);
+    public SnapshotManifest? CheckpointManifest => Volatile.Read(ref _checkpointManifest);
     private bool _historyTruncated;
     private int _seed;
     private const int MaxHistory = 200_000;
@@ -277,10 +283,12 @@ public sealed class DedicatedServer : IAsyncDisposable
             peer.CanEdit = _options.EveryoneCanEdit || _controllerId is null;
             if (!_options.EveryoneCanEdit && _controllerId is null) _controllerId = peer.Id;
             peer.Joined = true;
+            if (_checkpointOwnerId is null) _checkpointOwnerId = peer.Id;
             peer.Queue(new WireMessage
             {
                 Type = "Welcome", Policy = _policy, CanEdit = peer.CanEdit,
-                GameVersion = version, ModHash = modHash, ClientVersion = NetworkProtocol.ClientVersion
+                GameVersion = version, ModHash = modHash, ClientVersion = NetworkProtocol.ClientVersion,
+                CheckpointOwner = _checkpointOwnerId == peer.Id
             });
             // A peer arriving after the start replays the same snapshot plus every order issued since.
             if (GameRunning) SendCatchUp(peer);
@@ -376,12 +384,46 @@ public sealed class DedicatedServer : IAsyncDisposable
             if (message.Sha256 is { Length: > 0 } expected && !string.Equals(expected, manifest.Id, StringComparison.Ordinal))
             { peer.Queue(WireMessage.Error("WorldHashMismatch", "The server computed a different world hash.", message.RequestId)); return; }
             Volatile.Write(ref _worldManifest, manifest);
+            if (message.Checkpoint)
+            {
+                await ApplyCheckpointAsync(peer, message, manifest).ConfigureAwait(false);
+                return;
+            }
             foreach (var recipient in _peers.Values)
                 if (recipient.Joined) recipient.Queue(new WireMessage { Type = "World", Manifest = manifest });
             peer.Queue(new WireMessage { Type = "WorldCommitted", RequestId = message.RequestId, Manifest = manifest });
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         { peer.Queue(WireMessage.Error("WorldStoreFailed", "The world snapshot could not be stored.", message.RequestId)); }
+    }
+
+    /// <summary>
+    /// A checkpoint is a fresh snapshot taken at a known tick by the designated owner. Everything older
+    /// than it is dropped from the history, so joins replay only the delta instead of the whole session.
+    /// </summary>
+    private async Task ApplyCheckpointAsync(Peer peer, WireMessage message, SnapshotManifest manifest)
+    {
+        if (_checkpointOwnerId != peer.Id)
+        {
+            peer.Queue(WireMessage.Error("NotCheckpointOwner", "Only the checkpoint owner may publish checkpoints.", message.RequestId));
+            return;
+        }
+        if (!GameRunning || message.Tick <= 0 || message.Tick > Tick)
+        {
+            peer.Queue(WireMessage.Error("InvalidCheckpoint", "The checkpoint tick must be inside the running session.", message.RequestId));
+            return;
+        }
+        Volatile.Write(ref _checkpointManifest, manifest);
+        Volatile.Write(ref _checkpointTick, message.Tick);
+        lock (_history)
+        {
+            _history.RemoveAll(command => command.Tick <= message.Tick);
+            _historyTruncated = false;
+        }
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Checkpoint", Tick = message.Tick, Manifest = manifest });
+        peer.Queue(new WireMessage { Type = "WorldCommitted", RequestId = message.RequestId, Manifest = manifest });
+        await PersistSessionAsync(peer.Token).ConfigureAwait(false);
     }
 
     private async Task StartGameAsync(Peer peer, WireMessage message)
@@ -397,6 +439,8 @@ public sealed class DedicatedServer : IAsyncDisposable
             Interlocked.Exchange(ref _commandSequence, 0);
             Volatile.Write(ref _seed, Random.Shared.Next());
             lock (_history) { _history.Clear(); _historyTruncated = false; }
+            Volatile.Write(ref _checkpointManifest, world);
+            Volatile.Write(ref _checkpointTick, 0);
             _firstHashAtTick.Clear();
             lock (_reportedDesyncTicks) _reportedDesyncTicks.Clear();
             Volatile.Write(ref _gameRunning, 1);
@@ -463,10 +507,14 @@ public sealed class DedicatedServer : IAsyncDisposable
     /// <summary>Sends the current epoch and the full command history to a peer that arrives mid-session.</summary>
     private void SendCatchUp(Peer peer)
     {
-        var world = WorldManifest;
+        var world = CheckpointManifest ?? WorldManifest;
         var epoch = Epoch;
         if (world is null || epoch < 0) return;
-        peer.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = Tick, WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed) });
+        peer.Queue(new WireMessage
+        {
+            Type = "Started", Epoch = epoch, Tick = Tick, SnapshotTick = CheckpointTick,
+            WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed)
+        });
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];
         for (var offset = 0; offset < snapshot.Count; offset += 200)
@@ -541,15 +589,27 @@ public sealed class DedicatedServer : IAsyncDisposable
         try
         {
             peer.Joined = false;
-            if (_options.EveryoneCanEdit || _controllerId != peer.Id) return;
-            var successor = _peers.Values.Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
-                .OrderBy(candidate => candidate.Id).FirstOrDefault();
-            _controllerId = successor?.Id;
-            if (successor is not null)
+            Peer? newOwner = null;
+            if (_checkpointOwnerId == peer.Id)
             {
-                successor.CanEdit = true;
-                successor.Queue(new WireMessage { Type = "Role", CanEdit = true });
+                var successor = _peers.Values
+                    .Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
+                    .OrderBy(candidate => candidate.Id).FirstOrDefault();
+                _checkpointOwnerId = successor?.Id;
+                newOwner = successor;
             }
+            if (!_options.EveryoneCanEdit && _controllerId == peer.Id)
+            {
+                var successor = _peers.Values.Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
+                    .OrderBy(candidate => candidate.Id).FirstOrDefault();
+                _controllerId = successor?.Id;
+                if (successor is not null)
+                {
+                    successor.CanEdit = true;
+                    successor.Queue(new WireMessage { Type = "Role", CanEdit = true });
+                }
+            }
+            newOwner?.Queue(new WireMessage { Type = "CheckpointRole", CheckpointOwner = true });
         }
         finally { _stateGate.Release(); }
     }

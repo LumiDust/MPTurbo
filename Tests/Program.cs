@@ -535,6 +535,40 @@ await Test("after a desync the controller can restart the colony with a fresh ep
     Check(server.HistoryCount == 0, "old commands are cleared");
 });
 
+await Test("a checkpoint trims history so a late join replays only the delta", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("checkpoint")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    Check(host.IsCheckpointOwner, "first peer owns checkpoints");
+    var world = new byte[4096]; new Random(31).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    for (var i = 0; i < 3; i++)
+        await host.SendCommandAsync("designation", System.Text.Encoding.UTF8.GetBytes($"Mine|0|{i}|{i}"));
+    await Until(() => server.HistoryCount == 3);
+    await Until(() => server.Tick >= 4);
+    var tick = server.Tick;
+    var checkpoint = new byte[8192]; new Random(32).NextBytes(checkpoint);
+    var manifest = TurboTick.Networking.SnapshotBuilder.Describe(checkpoint);
+    await host.CheckpointWorldAsync(manifest, new MemoryStream(checkpoint), tick);
+    Check(server.CheckpointTick == tick, "checkpoint tick recorded");
+    Check(server.HistoryCount == 0, "commands before the checkpoint are dropped");
+    await host.SendCommandAsync("draft", "7|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+    await using var late = new DedicatedClient();
+    var started = new TaskCompletionSource<SessionInfo>();
+    var replay = new List<GameCommand>();
+    late.WorldStarted += (session, _) => started.TrySetResult(session);
+    late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
+    await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
+    var info = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(info.SnapshotTick == tick, "late peer starts from the checkpoint tick");
+    await Until(() => { lock (replay) return replay.Count == 1; });
+    Check(replay[0].Kind == "draft", "only the delta replays");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

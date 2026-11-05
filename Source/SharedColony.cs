@@ -34,10 +34,15 @@ public static class SharedColony
 
     private static bool seeded;
 
+    private static int lastCheckpointTick;
+    private const int CheckpointInterval = 3000;
+
     public static void OnWorldStarted(SessionInfo info, SnapshotManifest manifest)
     {
         Session.BeginLoading(info.Epoch, manifest.Id);
+        Session.Barrier.Reset(Math.Max(0, info.SnapshotTick));
         Session.Barrier.Publish(info.Tick);
+        lastCheckpointTick = info.SnapshotTick;
         Session.WorldLoaded();
         Session.Playing();
         // Align the global random stream so both peers draw the same sequence for the same tick.
@@ -80,6 +85,11 @@ public static class SharedColony
         Session.Barrier.TryAdvance();
         ApplyDue();
         if (Session.Barrier.AppliedTick % 60 == 0) ReportHash();
+        if (RoomConnection.IsCheckpointOwner && Session.Barrier.AppliedTick - lastCheckpointTick >= CheckpointInterval)
+        {
+            lastCheckpointTick = Session.Barrier.AppliedTick;
+            RoomConnection.PublishCheckpoint(lastCheckpointTick);
+        }
     }
 
     /// <summary>Periodic canonical hash so the server can prove all peers still simulate the same colony.</summary>

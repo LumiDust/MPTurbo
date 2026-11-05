@@ -23,6 +23,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     private string _status = "Disconnected";
     private int _connected;
     private int _canEdit;
+    private int _checkpointOwner;
     private int _disposed;
     private long _nextRequest;
 
@@ -32,9 +33,11 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<int>? Ticked;
     public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
     public event Action<int>? DesyncDetected;
+    public event Action<int, SnapshotManifest>? CheckpointPublished;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
+    public bool IsCheckpointOwner => Volatile.Read(ref _checkpointOwner) != 0;
     public string Status => Volatile.Read(ref _status);
 
     public DedicatedClient() => _notificationTask = Task.Run(NotificationLoopAsync);
@@ -85,6 +88,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                     Volatile.Write(ref _session, session);
                     Volatile.Write(ref _currentPolicy, welcome.Policy);
                     Volatile.Write(ref _canEdit, welcome.CanEdit.Value ? 1 : 0);
+                Volatile.Write(ref _checkpointOwner, welcome.CheckpointOwner == true ? 1 : 0);
                     Volatile.Write(ref _connected, 1);
                     PublishPolicy(welcome.Policy, session);
                     SetStatus(welcome.CanEdit.Value ? "Connected (controller)" : "Connected (read-only)", generation);
@@ -259,8 +263,12 @@ public sealed class DedicatedClient : IAsyncDisposable
         return reply.Manifest;
     }
 
+    /// <summary>Controller-only: upload a periodic checkpoint taken at <paramref name="checkpointTick"/>.</summary>
+    public Task CheckpointWorldAsync(SnapshotManifest manifest, Stream source, int checkpointTick, CancellationToken ct = default) =>
+        UploadWorldAsync(manifest, source, ct, checkpointTick);
+
     /// <summary>Controller-only: upload the authoritative world snapshot in verified chunks.</summary>
-    public async Task UploadWorldAsync(SnapshotManifest manifest, Stream source, CancellationToken ct = default)
+    public async Task UploadWorldAsync(SnapshotManifest manifest, Stream source, CancellationToken ct = default, int? checkpointTick = null)
     {
         Validation.Manifest(manifest);
         ArgumentNullException.ThrowIfNull(source);
@@ -281,7 +289,8 @@ public sealed class DedicatedClient : IAsyncDisposable
         }
         var reply = await RequestAsync(new WireMessage
         {
-            Type = "CommitWorld", UploadId = uploadId, ChunkCount = manifest.ChunkHashes.Count, Sha256 = manifest.Id
+            Type = "CommitWorld", UploadId = uploadId, ChunkCount = manifest.ChunkHashes.Count, Sha256 = manifest.Id,
+            Checkpoint = checkpointTick.HasValue, Tick = checkpointTick ?? 0
         }, ct, session).ConfigureAwait(false);
         if (reply.Type != "WorldCommitted" || reply.Manifest?.Id != manifest.Id)
             throw new NetworkException("WorldUploadRejected", "The server did not accept the world snapshot.");
@@ -459,7 +468,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
-                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? ""), started.Manifest!));
+                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick), started.Manifest!));
                         break;
                     case "Tick":
                         var tick = message.Tick;
@@ -468,6 +477,20 @@ public sealed class DedicatedClient : IAsyncDisposable
                     case "Desync":
                         var desyncTick = message.Tick;
                         Publish(session, () => DesyncDetected?.Invoke(desyncTick));
+                        break;
+                    case "Checkpoint":
+                        if (message.Manifest is not null) Validation.Manifest(message.Manifest);
+                        var checkpointTick = message.Tick;
+                        var checkpointManifest = message.Manifest;
+                        if (checkpointManifest is not null)
+                            Publish(session, () => CheckpointPublished?.Invoke(checkpointTick, checkpointManifest));
+                        break;
+                    case "CheckpointRole":
+                        lock (_stateSync)
+                        {
+                            if (ReferenceEquals(_session, session) && !session.IsClosed)
+                                Volatile.Write(ref _checkpointOwner, message.CheckpointOwner == true ? 1 : 0);
+                        }
                         break;
                     case "CatchUpTruncated":
                         Publish(session, () => StatusChanged?.Invoke("Catch-up history was truncated; restart the shared colony."));
