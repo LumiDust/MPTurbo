@@ -5,6 +5,9 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>MPTurbo</AssemblyName>
     <RootNamespace>MPTurbo</RootNamespace>
+    <Version>0.1.0</Version>
+    <AssemblyVersion>0.1.0.0</AssemblyVersion>
+    <FileVersion>0.1.0.0</FileVersion>
     <OutputPath>..\Assemblies\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
@@ -12,24 +15,35 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <DebugType>none</DebugType>
     <Deterministic>true</Deterministic>
-    <!-- 指向 Krafs.Rimworld.Ref 1.6 的引用程序集；用 /p:RimWorldDir=... 覆盖 -->
-    <RimWorldDir Condition="'$(RimWorldDir)'==''">E:\dsh\workspace\rimworld\tools\ref161\ref\net472</RimWorldDir>
+    <!--
+      两种引用方式，任选其一：
+      1) 默认：从 NuGet 拉 Krafs.Rimworld.Ref（CI / 新机器开箱即用）
+      2) 离线：/p:RimWorldDir=<解包后的 ref/net472 目录>，跳过 NuGet 包
+    -->
+    <UseLocalRefs Condition="'$(RimWorldDir)'!=''">true</UseLocalRefs>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Lib.Harmony" Version="2.4.2" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4850" Condition="'$(UseLocalRefs)'!='true'" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(UseLocalRefs)'=='true'">
     <Reference Include="Assembly-CSharp">
       <HintPath>$(RimWorldDir)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <!-- 1.6 的 Unity 程序集是模块化的；全量引用，Private=false 不进 Assemblies/ -->
     <Reference Include="$(RimWorldDir)\UnityEngine*.dll">
       <Private>false</Private>
     </Reference>
   </ItemGroup>
+
+  <!-- 用 Krafs 包时，系统程序集由包提供，避免和框架引用打架（与 Multiplayer 官方 csproj 同样的处理） -->
+  <Target Name="RemoveFramework" BeforeTargets="PrepareForBuild" DependsOnTargets="GetReferenceAssemblyPaths" Condition="'$(UseLocalRefs)'!='true'">
+    <PropertyGroup>
+      <TargetFrameworkDirectory></TargetFrameworkDirectory>
+    </PropertyGroup>
+  </Target>
 
 </Project>

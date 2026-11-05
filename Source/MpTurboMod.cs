@@ -56,8 +56,10 @@ namespace MpTurbo
             try
             {
                 MpTurboMod.Harmony = new Harmony("yg.mpturbo");
-                TickRatePatches.Install(MpTurboMod.Harmony);
                 MpBridge.Init();
+                TickRatePatches.Install(MpTurboMod.Harmony);
+                // 兜底补丁（GameComponent 没被创建时才生效）
+                MpTurboMod.Harmony.PatchAll(System.Reflection.Assembly.GetExecutingAssembly());
                 MpSync.Register();
             }
             catch (Exception e)

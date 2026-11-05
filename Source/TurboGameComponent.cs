@@ -9,9 +9,13 @@ namespace MpTurbo
     /// </summary>
     public class TurboGameComponent : GameComponent
     {
+        /// <summary>组件是否已被创建。用于让 <see cref="UiRootUpdateFallback"/> 判断要不要兜底。</summary>
+        public static bool Alive;
+
         // 1.6 的 GameComponent 是无参构造，由 Game.FillComponents() 自动实例化
         public TurboGameComponent()
         {
+            Alive = true;
         }
 
         public override void ExposeData()

@@ -90,13 +90,17 @@ public static void SetMultiplier(float value) { ... }           // 注册后：�
 ## 6. 编译
 
 ```powershell
-# 需要 .NET SDK 6+；引用程序集来自 Krafs.Rimworld.Ref 1.6
+# 默认：从 NuGet 拉 Krafs.Rimworld.Ref（不需要装游戏，CI 也是这么编的）
 cd Source
-dotnet build -c Release /p:RimWorldDir="<解包后的 ref/net472 目录>"
+dotnet build -c Release
+
+# 离线：自己指定 1.6 的引用程序集目录（解包 Krafs.Rimworld.Ref 的 ref/net472）
+dotnet build -c Release /p:RimWorldDir="<ref/net472 目录>"
 # 产物：..\Assemblies\MPTurbo.dll
 ```
 
-默认 `RimWorldDir` 指向本机工作区的 `tools/ref161/ref/net472`，换机器请覆盖。
+> 当前状态：**编译通过（0 warning / 0 error），尚未在实机（1.6 + Multiplayer）里跑过**。
+> 首次实机验证请按 `docs/COMPAT.md` §4 的自测清单走一遍，重点看第 3 条（双端倍率同步）与第 6 条（自动降速）。
 
 ---
 
