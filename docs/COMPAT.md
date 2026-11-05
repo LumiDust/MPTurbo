@@ -36,6 +36,19 @@
 | 其他"同步类" mod | ⚠️ 看它是否也改倍率 | 两个 mod 同时乘系数 = 乘法叠加，会超速；用 `maxRateCap` 兜底 |
 | 存档 mod（RimSaves 等） | ✅ | 只多一个 float 字段 |
 
+### 1.3 工坊里已知的相关 mod（2026-11-05 核验，218 个 ID 全量）
+
+| 工坊 ID | 名称 | 与本 mod 的关系 |
+|---|---|---|
+| `2902186466` | Multiplayer - Custom Tickrates | **功能重叠**：同样改联机 tick 速率。差异见 README §5.1 |
+| `3812768044` | Multiplayer Host Settings Sync | 相邻：它同步"房主设置"，本 mod 只同步"倍率"一个值 |
+| `3797749592` / `3830002705` | Desync Fix / Desync Probe | 不同层：它们做哈希级诊断，本 mod 只显示 `ticksBehind`/落后 tick |
+| `1629973374` | Multiplayer Compatibility | 互补：它让别的 mod 能在联机下用，本 mod 不碰别人的 mod |
+| `3820883853` 等 | 非官方 1.7 移植版 | **不要与本 mod 的 1.6 构建混用**；若移植版协议变了，本 mod 的同步注册可能失效（会降级为本地倍率 → 联机 desync，日志有 warning） |
+
+> 结论：**同时装两个"改倍率"的 mod 会乘法叠加**（例如 Custom Tickrates 3x + MP Turbo 2x = 6x），
+> 叠加后的值仍受 `maxRateCap` 限制。要么只装一个，要么把 `maxRateCap` 压低。
+
 ### 1.3 联机一致性（最容易被忽略的一条）
 
 **倍率必须全员一致。** 它决定"每个 DoTick 推进多少个游戏 tick"，只要有一个人不同，`mapTicks` 就会分叉 → desync。

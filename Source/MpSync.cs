@@ -78,5 +78,29 @@ namespace MpTurbo
             if (!CanEdit) return;
             SetMultiplier(TurboState.Multiplier + delta);
         }
+
+        static float lastSentAt = -999f;
+        static float lastSentValue = -1f;
+
+        /// <summary>
+        /// 给设置页滑块用：拖动时每帧都会触发，直接调 <see cref="SetMultiplier"/> 会刷屏发包。
+        /// 联机时做 0.25s / 0.05 步长的节流；单机时直接生效，保证手感。
+        /// </summary>
+        public static void SetMultiplierFromSlider(float value)
+        {
+            if (!MpBridge.IsInMultiplayer)
+            {
+                SetMultiplier(value);
+                return;
+            }
+
+            float now = Time.realtimeSinceStartup;
+            if (Mathf.Abs(value - lastSentValue) < 0.05f) return;
+            if (now - lastSentAt < 0.25f) return;
+
+            lastSentAt = now;
+            lastSentValue = value;
+            SetMultiplier(value);
+        }
     }
 }

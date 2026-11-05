@@ -52,7 +52,7 @@ namespace MpTurbo
             listing.Label(T("MPTurbo_Multiplier", TurboState.Multiplier.ToString("0.0")), 24f);
             float m = listing.Slider(TurboState.Multiplier, 1f, maxMultiplier);
             if (Mathf.Abs(m - TurboState.Multiplier) > 0.001f)
-                MpSync.SetMultiplier(m);
+                MpSync.SetMultiplierFromSlider(m);
             listing.Gap(6f);
 
             listing.CheckboxLabeled(T("MPTurbo_HostOnly"), ref hostOnly, T("MPTurbo_HostOnlyDesc"));
