@@ -1,6 +1,6 @@
 # 兼容性与「等待」处理方案
 
-这份文档回答两个问题：**这个 mod 怎么保证不把别人的存档/联机搞坏**，以及**"玩到后面一直等同步"到底能处理到什么程度**。
+> 目标版本：**RimWorld 1.7（Waylith / .NET 10）**。不覆盖 1.6 及以下。
 
 ---
 
@@ -8,7 +8,7 @@
 
 | 接触面 | 风险 | 本 mod 的做法 |
 |---|---|---|
-| **编译期** | 引用 MP 的程序集 → MP 换版本/没装就 `TypeLoadException`，整个 mod 加载失败 | **零引用**。`MPTurbo.csproj` 只引用 `Assembly-CSharp` + `UnityEngine.*` + Harmony；MP 的类型全部用 `GenTypes.GetTypeInAnyAssembly("...")` 反射拿 |
+| **编译期** | 引用 MP 的程序集 → MP 换版本/没装就 `TypeLoadException`，整个 mod 加载失败 | **零引用**。`MPTurbo.csproj` 只引用 1.7 的 `Assembly-CSharp` / `RimWorld` / `Waylith` / `UnityStubs` + Harmony 3；MP 的类型全部用 `GenTypes.GetTypeInAnyAssembly(name, null)` 反射拿 |
 | **补丁期** | 和 MP 抢同一个方法 → 行为叠加或覆盖 | **只补两个方法**：`AsyncTimeComp.TickRateMultiplier`、`AsyncWorldTimeComp.TickRateMultiplier`（Postfix，乘系数）。不碰 `TickManager.TickManagerUpdate`、`TickPatch`、`Scribe`、UI |
 | **运行期** | 读到 MP 内部状态，字段改名就崩 | 只读**公开静态字段/属性**（`Multiplayer.session`、`TickPatch.Timer/tickUntil/serverFrozen`、`PlayerInfo.ticksBehind`），全部包在 `try/catch` 里；读失败保持上一次的值 |
 | **数据期** | 往存档里塞东西，老存档读不了 / MP 的 `SessionData` 冲突 | 只加一个 `GameComponent` + 一个 float 字段（`mpTurboMultiplier`）。`Scribe_Values.Look` 带默认值，缺字段的旧存档能直接读 |
@@ -44,7 +44,7 @@
 | `3812768044` | Multiplayer Host Settings Sync | 相邻：它同步"房主设置"，本 mod 只同步"倍率"一个值 |
 | `3797749592` / `3830002705` | Desync Fix / Desync Probe | 不同层：它们做哈希级诊断，本 mod 只显示 `ticksBehind`/落后 tick |
 | `1629973374` | Multiplayer Compatibility | 互补：它让别的 mod 能在联机下用，本 mod 不碰别人的 mod |
-| `3820883853` 等 | 非官方 1.7 移植版 | **不要与本 mod 的 1.6 构建混用**；若移植版协议变了，本 mod 的同步注册可能失效（会降级为本地倍率 → 联机 desync，日志有 warning） |
+| `3820883853` 等 | 非官方 1.7 移植版 | **本 mod 只出 1.7 构建**；若移植版改了 MP 的协议/签名，本 mod 的同步注册可能失效（会降级为本地倍率 → 联机 desync，日志有 warning） |
 
 > 结论：**同时装两个"改倍率"的 mod 会乘法叠加**（例如 Custom Tickrates 3x + MP Turbo 2x = 6x），
 > 叠加后的值仍受 `maxRateCap` 限制。要么只装一个，要么把 `maxRateCap` 压低。

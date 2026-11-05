@@ -6,16 +6,16 @@
   <url>https://github.com/LumiDust/MPTurbo</url>
   <modVersion>0.1.0</modVersion>
   <supportedVersions>
-    <li>1.6</li>
+    <li>1.7</li>
   </supportedVersions>
-  <description>为 Multiplayer（联机）提供「时间倍率 + 全员同步 + 等待诊断」。
+  <description>为 Multiplayer（联机）提供「时间倍率 + 全员同步 + 等待诊断」。**只支持 1.7（Waylith / .NET 10）。**
 
-· 倍率：在游戏内把速度再乘 1–20 倍（叠加在原版 1x/3x/6x/15x 之上），需要手动开启。
+· 倍率：在游戏内把速度再乘 1–20 倍（叠加在原版 1x/3x/6x/15x 之上）。**默认关闭，需要你手动打开。**
 · 同步：任意玩家改倍率，全服同步（可设为仅房主可改）。
-· 等待：HUD 显示落后 tick、谁在拖后腿；落后过多时自动临时降回 1x 追赶。
-· 兼容：只读 Multiplayer 的公开字段、只补两个倍率方法，不碰 tick 主循环与存档结构；未装 Multiplayer 时退化为单机倍率。
+· 等待：HUD 显示落后 tick、谁在拖后腿；落后过多时自动把倍率同步降回 1x 追赶。
+· 兼容：零编译期依赖 Multiplayer（全部反射），只补两个倍率方法，不碰 tick 主循环与存档结构；未装 Multiplayer 时退化为单机倍率。
 
-不装 Multiplayer 也能用（单机倍率）。与 RimWorld Together 不兼容（它不支持本 mod 的同步通道）。</description>
+不装 Multiplayer 也能用（单机倍率）。</description>
   <modDependencies>
     <li>
       <packageId>brrainz.harmony</packageId>
@@ -25,6 +25,11 @@
   </modDependencies>
   <loadAfter>
     <li>Ludeon.RimWorld</li>
+    <li>Ludeon.RimWorld.Royalty</li>
+    <li>Ludeon.RimWorld.Ideology</li>
+    <li>Ludeon.RimWorld.Biotech</li>
+    <li>Ludeon.RimWorld.Anomaly</li>
+    <li>Ludeon.RimWorld.Odyssey</li>
     <li>brrainz.harmony</li>
     <li>rwmt.Multiplayer</li>
   </loadAfter>

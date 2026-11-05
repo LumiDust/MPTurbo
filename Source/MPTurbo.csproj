@@ -1,14 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net48</TargetFramework>
+    <!-- 1.7 / Waylith：只用 .NET 10，不再做 1.6 及以下 -->
+    <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
     <AssemblyName>MPTurbo</AssemblyName>
     <RootNamespace>MPTurbo</RootNamespace>
     <Version>0.1.0</Version>
     <AssemblyVersion>0.1.0.0</AssemblyVersion>
     <FileVersion>0.1.0.0</FileVersion>
-    <OutputPath>..\Assemblies\</OutputPath>
+    <OutputPath>..\1.7\Assemblies\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -16,17 +17,18 @@
     <DebugType>none</DebugType>
     <Deterministic>true</Deterministic>
     <!--
-      两种引用方式，任选其一：
-      1) 默认：从 NuGet 拉 Krafs.Rimworld.Ref（CI / 新机器开箱即用）
-      2) 离线：/p:RimWorldDir=<解包后的 ref/net472 目录>，跳过 NuGet 包
+      1.7 的四个程序集：Assembly-CSharp / RimWorld / Waylith / UnityStubs（没有 UnityEngine.*.dll）
+      两种来源，任选其一：
+      1) 默认：NuGet 的 Krafs.Rimworld.Ref（1.7 线目前是预发布版本）
+      2) 离线：/p:RimWorldDir=<解包后的 ref/net10.0 目录>
     -->
     <UseLocalRefs Condition="'$(RimWorldDir)'!=''">true</UseLocalRefs>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Lib.Harmony" Version="2.4.2" ExcludeAssets="runtime" />
-    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
-    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.6.4850" Condition="'$(UseLocalRefs)'!='true'" />
+    <!-- 1.7 = Harmony 3（.NET 10）。只引用编译期，运行期由 brrainz.harmony 提供 -->
+    <PackageReference Include="Lib.Harmony" Version="3.0.0-rc.4" ExcludeAssets="runtime" />
+    <PackageReference Include="Krafs.Rimworld.Ref" Version="1.7.4998-unstable" Condition="'$(UseLocalRefs)'!='true'" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(UseLocalRefs)'=='true'">
@@ -34,16 +36,18 @@
       <HintPath>$(RimWorldDir)\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="$(RimWorldDir)\UnityEngine*.dll">
+    <Reference Include="RimWorld">
+      <HintPath>$(RimWorldDir)\RimWorld.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Waylith">
+      <HintPath>$(RimWorldDir)\Waylith.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityStubs">
+      <HintPath>$(RimWorldDir)\UnityStubs.dll</HintPath>
       <Private>false</Private>
     </Reference>
   </ItemGroup>
-
-  <!-- 用 Krafs 包时，系统程序集由包提供，避免和框架引用打架（与 Multiplayer 官方 csproj 同样的处理） -->
-  <Target Name="RemoveFramework" BeforeTargets="PrepareForBuild" DependsOnTargets="GetReferenceAssemblyPaths" Condition="'$(UseLocalRefs)'!='true'">
-    <PropertyGroup>
-      <TargetFrameworkDirectory></TargetFrameworkDirectory>
-    </PropertyGroup>
-  </Target>
 
 </Project>

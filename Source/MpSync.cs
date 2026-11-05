@@ -94,7 +94,7 @@ namespace MpTurbo
                 return;
             }
 
-            float now = Time.realtimeSinceStartup;
+            float now = Clock.Now;
             if (Mathf.Abs(value - lastSentValue) < 0.05f) return;
             if (now - lastSentAt < 0.25f) return;
 
@@ -104,3 +104,4 @@ namespace MpTurbo
         }
     }
 }
+

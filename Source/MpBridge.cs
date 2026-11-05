@@ -56,7 +56,7 @@ namespace MpTurbo
             if (initTried) return;
             initTried = true;
 
-            var mpType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.Multiplayer");
+            var mpType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.Multiplayer", null);
             if (mpType == null)
             {
                 MpPresent = false;
@@ -66,10 +66,10 @@ namespace MpTurbo
 
             try
             {
-                ApiType = GenTypes.GetTypeInAnyAssembly("Multiplayer.API.MP");
-                tickPatchType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.TickPatch");
-                sessionType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.MultiplayerSession");
-                playerInfoType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.PlayerInfo");
+                ApiType = GenTypes.GetTypeInAnyAssembly("Multiplayer.API.MP", null);
+                tickPatchType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.TickPatch", null);
+                sessionType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.MultiplayerSession", null);
+                playerInfoType = GenTypes.GetTypeInAnyAssembly("Multiplayer.Client.PlayerInfo", null);
 
                 const BindingFlags SF = BindingFlags.Public | BindingFlags.Static;
                 const BindingFlags IF = BindingFlags.Public | BindingFlags.Instance;
@@ -112,7 +112,7 @@ namespace MpTurbo
         public static void Refresh()
         {
             if (!MpPresent) return;
-            float now = Time.realtimeSinceStartup;
+            float now = Clock.Now;
             if (now - lastRefresh < 0.25f) return;
             lastRefresh = now;
 
@@ -184,3 +184,4 @@ namespace MpTurbo
         }
     }
 }
+

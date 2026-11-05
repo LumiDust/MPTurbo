@@ -2,14 +2,14 @@
 
 给 [Multiplayer](https://steamcommunity.com/sharedfiles/filedetails/?id=2606448745)（环世界联机 mod）用的**时间倍率 + 全员同步 + 等待诊断**小 mod。
 
+**只支持 RimWorld 1.7（Waylith 引擎 / .NET 10）。** 不做 1.6 及以下。
+
 - 倍率：在游戏当前速度上再乘 **1–20 倍**（默认 2x，**默认关闭，必须手动打开**）。
 - 同步：任何一个人改倍率，**全服同步**；可设为仅房主可改。
 - 等待：右上角 HUD 显示落后多少 tick、谁在拖后腿；可选「落后自动降回 1x」。
 - 兼容：**不引用 Multiplayer 的任何程序集**，全部走反射；没装 MP 时退化成单机倍率。
 
 > **为什么不默认开**：装个 mod 就悄悄把游戏变成 2 倍速是很糟糕的体验，也会让"卡顿是不是 mod 导致的"变得难以排查。所以默认 `enabled = false`，HUD 上有一个「启用倍率」按钮，一键开。
-
-> 版本：0.1.0 · 目标 RimWorld **1.6**（MP 当前只支持 1.6） · 依赖 **Harmony**（必需）、Multiplayer（可选）
 
 ---
 
@@ -27,7 +27,7 @@ MP Turbo 就是把这三件事补上：**中间档倍率**、**倍率全员同�
 
 ## 2. 安装
 
-1. 订阅 [Harmony](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)。
+1. 订阅 [Harmony](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)（1.7 上是 Harmony 3）。
 2. 把本 mod 目录放进 `<游戏根>/Mods/`（或订阅创意工坊版本）。
 3. mod 列表里放在 **Core / DLC / Harmony / Multiplayer 之后**。
 4. **联机时所有玩家都要装**——MP 会校验 mod 列表，缺一个进不来；这也是保证倍率一致的前提。
@@ -38,8 +38,8 @@ MP Turbo 就是把这三件事补上：**中间档倍率**、**倍率全员同�
 
 | 操作 | 位置 |
 |---|---|
-| 开/关倍率 | 选项 → Mod 设置 → MP Turbo → 「启用倍率」 |
-| 调倍率 | 同上滑块，或右上角 HUD 的 `−` / `+` / `1x` |
+| 开/关倍率 | 选项 → Mod 设置 → MP Turbo → 「启用倍率」，或 HUD 上的「启用倍率」按钮 |
+| 调倍率 | 同上滑块，或 HUD 的 `-` / `+` / `1x` |
 | 仅房主可改 | Mod 设置 → 「仅房主可改倍率」 |
 | 自动降速 | Mod 设置 → 「落后时自动降回 1x（全服）」 |
 | 看谁在拖后腿 | 右上角 HUD（可关） |
@@ -77,6 +77,16 @@ MP.RegisterSyncMethod(typeof(MpSync), nameof(SetMultiplier));   // 反射调用�
 public static void SetMultiplier(float value) { ... }           // 注册后：本地调用 → 广播 → 全员执行
 ```
 
+### 4.1 1.7 特有的适配点
+
+| 项 | 1.7 的实际情况 | 处理 |
+|---|---|---|
+| 目标框架 | `.NET 10`，程序集 `Assembly-CSharp` + `RimWorld` + `Waylith` + `UnityStubs` | csproj 只引这四个，**不引 `UnityEngine.*.dll`**（1.7 没有） |
+| Harmony | Harmony 3（`Lib.Harmony 3.0.0-rc.4`） | 编译期 `ExcludeAssets="runtime"`，运行期由 `brrainz.harmony` 提供 |
+| `GenTypes.GetTypeInAnyAssembly` | 1.7 的公开签名是 `(string, string)`（第二参为命名空间提示） | 调用传 `null` |
+| `UnityEngine.Time` | 由 `UnityStubs.dll` 提供，成员名在版本间会漂 | 不用它，改用 BCL 的 `Stopwatch`（`Source/Clock.cs`） |
+| 目录分流 | `LoadFolders.xml` 用 `<v1.7>` | 根目录放 About/Defs/Languages，`1.7/Assemblies` 放 dll |
+
 ---
 
 ## 5. 已知限制（重要）
@@ -85,7 +95,8 @@ public static void SetMultiplier(float value) { ... }           // 注册后：�
 2. **强制正常速度（袭击/事件）也会被乘。** 原版 `slower.ForcedNormalSpeed` 会把速率压到 1，本 mod 会把它乘上去；如果你希望威胁时强制 1x，请把倍率手动调回 1x。
 3. **自动降速是全服行为。** 倍率必须全员一致，任何"只降自己"的做法都会 desync，所以自动降速走的是同步命令。
 4. **不能防止有人绕过 UI 直接发命令。** 「仅房主可改」是客户端约束，不是服务器强制（MP 没有暴露权限 API）。
-5. **与 RimWorld Together 不兼容。** Together 不走 MP 的同步通道，装了也没意义。
+5. **1.7 的 Multiplayer 本身还不是官方支持状态。** 官方仓库 `supportedVersions` 仍只有 1.6，工坊上的 1.7 版本是社区移植/临时版。若你用的移植版改了协议，本 mod 的同步注册可能失效（会降级为本地倍率 → 联机 desync，日志有 warning）。
+6. **与 RimWorld Together 不兼容。** Together 不走 MP 的同步通道，装了也没意义。
 
 ### 5.1 与工坊上已有 mod 的关系
 
@@ -104,16 +115,17 @@ public static void SetMultiplier(float value) { ... }           // 注册后：�
 ## 6. 编译
 
 ```powershell
-# 默认：从 NuGet 拉 Krafs.Rimworld.Ref（不需要装游戏，CI 也是这么编的）
+# 需要 .NET 10 SDK（1.7 = net10.0）
+# 默认：从 NuGet 拉 Krafs.Rimworld.Ref（1.7 预发布线），不需要装游戏，CI 也是这么编的
 cd Source
 dotnet build -c Release
 
-# 离线：自己指定 1.6 的引用程序集目录（解包 Krafs.Rimworld.Ref 的 ref/net472）
-dotnet build -c Release /p:RimWorldDir="<ref/net472 目录>"
-# 产物：..\Assemblies\MPTurbo.dll
+# 离线：自己指定 1.7 的引用程序集目录（解包 Krafs.Rimworld.Ref 的 ref/net10.0）
+dotnet build -c Release /p:RimWorldDir="<ref/net10.0 目录>"
+# 产物：..\1.7\Assemblies\MPTurbo.dll
 ```
 
-> 当前状态：**编译通过（0 warning / 0 error），尚未在实机（1.6 + Multiplayer）里跑过**。
+> 当前状态：**编译通过（net10.0，0 warning / 0 error，NuGet 与离线两条路都验过），尚未在实机（1.7 + Multiplayer）里跑过**。
 > 首次实机验证请按 `docs/COMPAT.md` §4 的自测清单走一遍，重点看第 3 条（双端倍率同步）与第 6 条（自动降速）。
 
 ---
@@ -123,9 +135,10 @@ dotnet build -c Release /p:RimWorldDir="<ref/net472 目录>"
 ```
 MPTurbo/
 ├─ About/About.xml
-├─ Assemblies/MPTurbo.dll        # 构建产物
+├─ LoadFolders.xml               # <v1.7> → / + 1.7
+├─ 1.7/Assemblies/MPTurbo.dll    # 构建产物（net10.0）
 ├─ Languages/{ChineseSimplified,English}/Keyed/MPTurbo.xml
-├─ Source/                       # 6 个 .cs，见 docs/COMPAT.md 的分层说明
+├─ Source/                       # 见 docs/COMPAT.md 的分层说明
 ├─ docs/COMPAT.md                # 兼容性与"等待"处理方案（设计文档）
 └─ README.md
 ```

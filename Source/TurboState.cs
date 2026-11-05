@@ -6,7 +6,7 @@ namespace MpTurbo
     /// 倍率状态机。核心只有一件事：把 Multiplayer / 原版算出来的 TickRateMultiplier 再乘一个系数。
     ///
     /// 为什么补在"倍率"层而不是改 tick 循环：原版的 3x/6x/15x 本来就是这么实现的
-    /// （TickManager.TickRateMultiplier / MP 的 AsyncTimeComp.TickRateMultiplier），
+    /// （1.7 的 <c>TickManager.TickRateMultiplier</c> / MP 的 <c>AsyncTimeComp.TickRateMultiplier</c>），
     /// 在这层乘系数与 MP 自己的时间系统同构，不会和它的命令调度打架。
     ///
     /// 重要：倍率是**全局同步值**。所有客户端必须乘同一个系数，否则每 tick 推进的游戏 tick 数不同 → desync。
@@ -67,7 +67,7 @@ namespace MpTurbo
             if (!MpBridge.IsInMultiplayer) return;          // 单机不需要
             if (!MpSync.Registered) return;                 // 没注册同步就不能改，否则会分叉
 
-            float now = Time.realtimeSinceStartup;
+            float now = Clock.Now;
             int lag = MpBridge.Lag;
 
             if (!AutoActive)
