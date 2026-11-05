@@ -28,4 +28,5 @@
   <TurboTick_SharedLoading>Shared colony: loading save...</TurboTick_SharedLoading>
   <TurboTick_SharedFault>Shared colony error: {0}</TurboTick_SharedFault>
   <TurboTick_Enable>Enable extra multiplier (on by default, synced per room)</TurboTick_Enable>
+  <TurboTick_Diagnostics>Diagnostics (attach when reporting a problem)</TurboTick_Diagnostics>
 </LanguageData>

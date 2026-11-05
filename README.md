@@ -60,6 +60,7 @@ pwsh scripts/package.ps1
 该命令完成构建、集成测试及打包，输出位于 `artifacts/`。游戏引用程序集由 NuGet 提供，编译不需要安装游戏。
 
 - [参与开发](CONTRIBUTING.md)
+- [游戏内验收清单](docs/INGAME_CHECKLIST.md)（设置页有对应诊断信息可复制）
 - [兼容性与等待处理](docs/COMPAT.md)
 - [开发路线图](docs/ROADMAP.md)
 - [Steam 创意工坊发布](docs/STEAM_WORKSHOP.md)

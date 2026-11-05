@@ -77,6 +77,9 @@ public class TurboTickSettings : ModSettings
         if (Widgets.ButtonText(new Rect(cache.x, cache.y, 320f, 28f), T("TurboTick_CacheSnapshot"), true, true, TurboState.Authority.SessionConnected))
             RoomConnection.CacheSnapshot();
         listing.Label(RoomConnection.SnapshotStatus, 42f);
+        listing.Gap(6f);
+        listing.Label(T("TurboTick_Diagnostics"), 24f);
+        listing.Label(Diagnostics.Build(), 150f);
         listing.End();
     }
 

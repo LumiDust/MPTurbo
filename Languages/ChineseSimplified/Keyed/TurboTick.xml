@@ -28,4 +28,5 @@
   <TurboTick_SharedLoading>共享殖民地：载入存档中…</TurboTick_SharedLoading>
   <TurboTick_SharedFault>共享殖民地异常：{0}</TurboTick_SharedFault>
   <TurboTick_Enable>启用额外倍率（默认开启，随房间同步）</TurboTick_Enable>
+  <TurboTick_Diagnostics>诊断信息（反馈问题请附上）</TurboTick_Diagnostics>
 </LanguageData>
