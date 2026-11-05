@@ -500,7 +500,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             }
             batch.Add(assigned);
             foreach (var recipient in _peers.Values)
-                if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch });
+                if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch, Epoch = Epoch });
         }
         if (++_commandsSincePersist >= 200)
         {
@@ -575,7 +575,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];
         for (var offset = 0; offset < snapshot.Count; offset += 200)
-            peer.Queue(new WireMessage { Type = "Commands", Commands = snapshot.GetRange(offset, Math.Min(200, snapshot.Count - offset)) });
+            peer.Queue(new WireMessage { Type = "Commands", Commands = snapshot.GetRange(offset, Math.Min(200, snapshot.Count - offset)), Epoch = epoch });
         if (HistoryTruncated) peer.Queue(new WireMessage { Type = "CatchUpTruncated" });
     }
 

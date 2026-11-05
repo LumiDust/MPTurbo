@@ -466,6 +466,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is not null) Validation.Manifest(message.Manifest);
                         break;
                     case "Started":
+                        session.Epoch = message.Epoch;
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
@@ -505,6 +506,8 @@ public sealed class DedicatedClient : IAsyncDisposable
                     case "Commands":
                         if (message.Commands is null) throw new NetworkException("InvalidCommand", "The server sent an empty command batch.");
                         var commands = message.Commands.ToArray();
+                        // Commands from a previous epoch belong to a colony that has been restarted.
+                        if (message.Epoch >= 0 && message.Epoch != session.Epoch) break;
                         Publish(session, () => CommandsReceived?.Invoke(commands));
                         break;
                     case "Error":
@@ -621,6 +624,7 @@ public sealed class DedicatedClient : IAsyncDisposable
         internal Task Heartbeat = Task.CompletedTask;
         internal Task Completion = Task.CompletedTask;
         internal long LastRevision;
+        internal long Epoch = -1;
         internal readonly long Generation;
         internal readonly CancellationToken Token;
         internal bool IsClosed => Volatile.Read(ref _closed) != 0;

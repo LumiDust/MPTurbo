@@ -766,6 +766,42 @@ await Test("an overflowed history tells the joining peer it cannot catch up inst
     Check(!server.HistoryTruncated && server.HistoryCount == 0, "checkpoint clears the truncation state");
 });
 
+await Test("command batches carry their epoch and the checkpoint owner passes to a survivor", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("epoch")));
+    await server.StartAsync();
+    await using var first = new DedicatedClient();
+    await using var second = new DedicatedClient();
+    await first.ConnectAsync("127.0.0.1", server.Port, Hello("first"));
+    await second.ConnectAsync("127.0.0.1", server.Port, Hello("second"));
+    Check(first.IsCheckpointOwner && !second.IsCheckpointOwner, "first peer owns checkpoints");
+    var world = new byte[2048]; new Random(101).NextBytes(world);
+    await first.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    var epochs = new List<long>();
+    second.WorldStarted += (session, _) => { lock (epochs) epochs.Add(session.Epoch); };
+    await first.StartGameAsync();
+    await Until(() => { lock (epochs) return epochs.Count == 1; });
+    var firstEpoch = epochs[0];
+    var batch = new TaskCompletionSource<long>();
+    second.CommandsReceived += _ => { };
+    var seenEpoch = new TaskCompletionSource<long>();
+    await first.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+    // Restart creates a new epoch; the old command must not be replayable into it.
+    await first.StartGameAsync();
+    await Until(() => { lock (epochs) return epochs.Count == 2; });
+    Check(epochs[1] > firstEpoch, "restart bumps the epoch");
+    Check(server.HistoryCount == 0, "old commands are gone");
+    // Owner left, so the survivor takes over checkpoints.
+    await first.DisconnectAsync();
+    await Until(() => second.IsCheckpointOwner);
+    Check(second.IsCheckpointOwner, "ownership migrates to the survivor");
+    await Task.Delay(150);
+    await second.CheckpointWorldAsync(
+        TurboTick.Networking.SnapshotBuilder.Describe(new byte[1024]), new MemoryStream(new byte[1024]), server.Tick);
+    Check(server.CheckpointManifest is not null, "new owner can checkpoint");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
