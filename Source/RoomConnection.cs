@@ -53,6 +53,14 @@ internal static class RoomConnection
         });
         socket.WorldStarted += (session, manifest) => Post(id, () =>
         {
+            if (manifest.Id == publishedWorldId)
+            {
+                // The controller just uploaded this save; its running game already is that world.
+                SharedColony.OnWorldStarted(session, manifest);
+                SharedColony.OnWorldLoaded();
+                Status = "共享殖民地已开始（本机为来源存档）";
+                return;
+            }
             Status = "共享殖民地已开始，正在同步存档…";
             SharedColony.OnWorldStarted(session, manifest);
             DownloadAndLoad(manifest, id);
@@ -130,6 +138,7 @@ internal static class RoomConnection
             {
                 using var stream = new MemoryStream(bytes, writable: false);
                 await socket.UploadWorldAsync(manifest, stream, token).ConfigureAwait(false);
+                publishedWorldId = manifest.Id;
                 await socket.StartGameAsync(token).ConfigureAwait(false);
                 Post(id, () => Status = "已发布并开始共享殖民地");
             }
@@ -153,9 +162,10 @@ internal static class RoomConnection
                     try
                     {
                         GameDataSaveLoader.LoadGame(path);
+                        SharedColony.OnWorldLoaded();
                         Status = "共享殖民地已载入";
                     }
-                    catch (Exception error) { Status = "载入共享存档失败：" + error.Message; }
+                    catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); Status = "载入共享存档失败：" + error.Message; }
                 });
             }
             catch (Exception error) { Post(id, () => Status = "下载共享存档失败：" + error.Message); }
@@ -186,6 +196,7 @@ internal static class RoomConnection
         Connect(settings);
     }
     private static int checkpointing;
+    private static string? publishedWorldId;
 
     /// <summary>Checkpoint owner: saves the colony at the current tick and publishes it so late joins replay less.</summary>
     public static void PublishCheckpoint(int tick)

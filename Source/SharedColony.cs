@@ -43,8 +43,8 @@ public static class SharedColony
         Session.Barrier.Reset(Math.Max(0, info.SnapshotTick));
         Session.Barrier.Publish(info.Tick);
         lastCheckpointTick = info.SnapshotTick;
-        Session.WorldLoaded();
-        Session.Playing();
+        // Stay in LoadingWorld until the snapshot is actually in the game; commands must not apply to the
+        // previous colony, which is still resident while the download runs.
         // Align the global random stream so both peers draw the same sequence for the same tick.
         if (!seeded)
         {
@@ -145,10 +145,24 @@ public static class SharedColony
         RoomConnection.ReconnectFromFault();
     }
 
+    /// <summary>The caller confirms the shared world is now the running game.</summary>
+    public static void OnWorldLoaded()
+    {
+        Session.WorldLoaded();
+        Session.Playing();
+    }
+
+    public static void OnWorldLoadFailed(string reason)
+    {
+        Session.Fault("载入共享存档失败：" + reason);
+        Log.Error("[TurboTick] " + reason);
+    }
+
     /// <summary>Applies commands whose tick has arrived. Also used while paused so late commands still land.</summary>
     public static void ApplyDue()
     {
-        if (!Session.IsActive) return;
+        // Never apply to the previous colony while a replacement snapshot is still loading.
+        if (Session.Phase != SharedPhase.Playing) return;
         foreach (var command in Session.Commands.TakeThrough(Session.Barrier.AppliedTick))
             SharedActions.Apply(command);
     }

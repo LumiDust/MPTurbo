@@ -711,6 +711,22 @@ await Test("comparison hashes stay inside a bounded window during a long session
     Check(server.TrackedHashTicks >= 5, "recent history is still available for comparison");
 });
 
+await Test("a session refuses input and applies no commands until the world is loaded", () =>
+{
+    var session = new TurboTick.Simulation.SharedSession();
+    session.BeginLoading(3, "abc");
+    Check(!session.AcceptsInput && session.Phase == TurboTick.Simulation.SharedPhase.LoadingWorld, "loading blocks input");
+    session.Commands.Accept(new GameCommand(1, 0, "designation", [1]));
+    Check(session.Commands.Count == 1, "commands are buffered, not dropped");
+    session.WorldLoaded();
+    Check(!session.AcceptsInput && session.Phase == TurboTick.Simulation.SharedPhase.Synchronizing, "synchronising still blocks input");
+    session.Playing();
+    Check(session.AcceptsInput, "playing allows input");
+    session.Fault("boom");
+    Check(session.Phase == TurboTick.Simulation.SharedPhase.Faulted && session.Commands.Count == 0, "fault stops and clears");
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
