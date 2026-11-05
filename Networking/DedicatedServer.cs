@@ -38,6 +38,7 @@ public sealed class DedicatedServer : IAsyncDisposable
     // Command history lets a peer that joins mid-session replay the same decisions from the same snapshot.
     private readonly List<GameCommand> _history = [];
     private readonly ConcurrentDictionary<int, string> _firstHashAtTick = new();
+    private readonly ConcurrentDictionary<int, string[]> _firstCategoriesAtTick = new();
     private readonly HashSet<int> _reportedDesyncTicks = [];
     private long? _checkpointOwnerId;
     private SnapshotManifest? _checkpointManifest;
@@ -442,6 +443,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             Volatile.Write(ref _checkpointManifest, world);
             Volatile.Write(ref _checkpointTick, 0);
             _firstHashAtTick.Clear();
+            _firstCategoriesAtTick.Clear();
             lock (_reportedDesyncTicks) _reportedDesyncTicks.Clear();
             Volatile.Write(ref _gameRunning, 1);
             var seed = Volatile.Read(ref _seed);
@@ -501,6 +503,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         if (!_firstHashAtTick.TryGetValue(message.Tick, out var first))
         {
             _firstHashAtTick[message.Tick] = hash;
+            if (message.Categories is { Length: > 0 }) _firstCategoriesAtTick[message.Tick] = message.Categories;
             return;
         }
         if (string.Equals(first, hash, StringComparison.Ordinal)) return;
@@ -508,8 +511,20 @@ public sealed class DedicatedServer : IAsyncDisposable
         {
             if (!_reportedDesyncTicks.Add(message.Tick)) return;
         }
+        // Name the divergent categories so a player can tell pawns from buildings from designations.
+        var differing = "state";
+        if (message.Categories is { Length: > 0 } mine && _firstCategoriesAtTick.TryGetValue(message.Tick, out var theirs)
+            && theirs.Length == mine.Length)
+        {
+            var names = new[] { "colonists", "things", "designations" };
+            var hits = new List<string>();
+            for (var i = 0; i < mine.Length; i++)
+                if (!string.Equals(mine[i], theirs[i], StringComparison.Ordinal))
+                    hits.Add(i < names.Length ? names[i] : "category" + i);
+            if (hits.Count > 0) differing = string.Join(",", hits);
+        }
         foreach (var recipient in _peers.Values)
-            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Desync", Tick = message.Tick });
+            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Desync", Tick = message.Tick, Message = differing });
     }
 
     /// <summary>Sends the current epoch and the full command history to a peer that arrives mid-session.</summary>

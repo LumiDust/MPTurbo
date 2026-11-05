@@ -59,7 +59,7 @@ internal static class RoomConnection
         });
         socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
-        socket.DesyncDetected += tick => Post(id, () => SharedColony.OnDesync(tick));
+        socket.DesyncDetected += (tick, detail) => Post(id, () => SharedColony.OnDesync(tick, detail));
         Track(Task.Run(async () =>
         {
             try
@@ -162,7 +162,7 @@ internal static class RoomConnection
         }));
     }
 
-    public static Task ReportHash(int tick, string sha256)
+    public static Task ReportHash(int tick, string sha256, IReadOnlyList<string>? categories = null)
     {
         if (client?.IsConnected != true) return Task.CompletedTask;
         var socket = client;
@@ -170,7 +170,7 @@ internal static class RoomConnection
         var id = generation;
         return Task.Run(async () =>
         {
-            try { await socket.ReportHashAsync(tick, sha256, token).ConfigureAwait(false); }
+            try { await socket.ReportHashAsync(tick, sha256, categories, token).ConfigureAwait(false); }
             catch (Exception error) { Post(id, () => Status = "状态校验上报失败：" + error.Message); }
         });
     }

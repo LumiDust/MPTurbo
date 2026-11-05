@@ -405,7 +405,7 @@ await Test("server reports a desync when two peers disagree on the same tick", a
     await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await a.StartGameAsync();
     var desync = new TaskCompletionSource<int>();
-    b.DesyncDetected += tick => desync.TrySetResult(tick);
+    b.DesyncDetected += (tick, _) => desync.TrySetResult(tick);
     var same = new string('a', 64);
     await a.ReportHashAsync(60, same);
     await b.ReportHashAsync(60, same);
@@ -595,6 +595,27 @@ await Test("server rejects unknown command kinds and throttles a flooding client
     await host.SendCommandAsync("designation", "Mine|0|9|9"u8.ToArray());
     await Until(() => server.HistoryCount > accepted);
     Check(server.HistoryCount > accepted, "client recovers after the window");
+});
+
+await Test("desync detail names the category that diverged", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("cat")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello());
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
+    var world = new byte[2048]; new Random(51).NextBytes(world);
+    await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await a.StartGameAsync();
+    var detail = new TaskCompletionSource<string>();
+    b.DesyncDetected += (_, text) => detail.TrySetResult(text);
+    var pawns = new string('1', 64);
+    var things = new string('2', 64);
+    var designations = new string('3', 64);
+    await a.ReportHashAsync(60, new string('a', 64), [pawns, things, designations]);
+    var otherDesignations = new string('4', 64);
+    await b.ReportHashAsync(60, new string('b', 64), [pawns, things, otherDesignations]);
+    Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(5)) == "designations", "only the differing category is named");
 });
 
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>

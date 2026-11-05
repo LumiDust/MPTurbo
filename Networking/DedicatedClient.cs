@@ -32,7 +32,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<SessionInfo, SnapshotManifest>? WorldStarted;
     public event Action<int>? Ticked;
     public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
-    public event Action<int>? DesyncDetected;
+    public event Action<int, string>? DesyncDetected;
     public event Action<int, SnapshotManifest>? CheckpointPublished;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
@@ -318,11 +318,11 @@ public sealed class DedicatedClient : IAsyncDisposable
     }
 
     /// <summary>Reports the local state hash for a tick so the server can detect divergence.</summary>
-    public async Task ReportHashAsync(int tick, string sha256, CancellationToken ct = default)
+    public async Task ReportHashAsync(int tick, string sha256, IReadOnlyList<string>? categories = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64) throw new ArgumentException("A full SHA256 hex string is required.", nameof(sha256));
         var session = ConnectedSession();
-        await session.Connection.WriteAsync(new WireMessage { Type = "ReportHash", Tick = tick, Sha256 = sha256 }, session.Token).ConfigureAwait(false);
+        await session.Connection.WriteAsync(new WireMessage { Type = "ReportHash", Tick = tick, Sha256 = sha256, Categories = categories?.ToArray() }, session.Token).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
     }
 
@@ -476,7 +476,8 @@ public sealed class DedicatedClient : IAsyncDisposable
                         break;
                     case "Desync":
                         var desyncTick = message.Tick;
-                        Publish(session, () => DesyncDetected?.Invoke(desyncTick));
+                        var detail = message.Message ?? "state";
+                        Publish(session, () => DesyncDetected?.Invoke(desyncTick, detail));
                         break;
                     case "Checkpoint":
                         if (message.Manifest is not null) Validation.Manifest(message.Manifest);

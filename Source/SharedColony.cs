@@ -98,32 +98,41 @@ public static class SharedColony
         var tick = Session.Barrier.AppliedTick;
         try
         {
-            var hash = StateHash.Compute(DescribeColony());
-            _ = RoomConnection.ReportHash(tick, hash);
+            var (entries, categories) = DescribeColony();
+            _ = RoomConnection.ReportHash(tick, StateHash.Compute(entries), categories);
         }
         catch (Exception error) { Log.Warning("[TurboTick] 状态哈希计算失败：" + error.Message); }
     }
 
-    private static List<string> DescribeColony()
+    /// <summary>Splits the colony into categories so a divergence can name what actually differs.</summary>
+    private static (List<string> All, List<string> Categories) DescribeColony()
     {
-        var entries = new List<string>();
+        var pawns = new List<string>();
+        var things = new List<string>();
+        var designations = new List<string>();
         foreach (var map in Find.Maps)
         {
             foreach (var pawn in map.mapPawns.AllPawnsSpawned)
-                entries.Add(StateHash.Pawn(pawn.thingIDNumber, map.Index, pawn.Position.x, pawn.Position.z,
+                pawns.Add(StateHash.Pawn(pawn.thingIDNumber, map.Index, pawn.Position.x, pawn.Position.z,
                     pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f, pawn.CurJobDef?.defName ?? ""));
             foreach (var thing in map.listerThings.AllThings)
                 if (thing is not Pawn)
-                    entries.Add(StateHash.Thing(thing.thingIDNumber, map.Index, thing.Position.x, thing.Position.z,
+                    things.Add(StateHash.Thing(thing.thingIDNumber, map.Index, thing.Position.x, thing.Position.z,
                         thing.stackCount, thing.HitPoints));
+            foreach (var designation in map.designationManager.AllDesignations)
+                designations.Add($"d:{designation.def.defName}:{map.Index}:{designation.target.Cell.x}:{designation.target.Cell.z}");
         }
-        return entries;
+        var all = new List<string>(pawns.Count + things.Count + designations.Count);
+        all.AddRange(pawns);
+        all.AddRange(things);
+        all.AddRange(designations);
+        return (all, [StateHash.Compute(pawns), StateHash.Compute(things), StateHash.Compute(designations)]);
     }
 
-    public static void OnDesync(int tick)
+    public static void OnDesync(int tick, string detail)
     {
-        Session.Fault($"状态分叉：tick {tick} 与其他玩家不一致");
-        Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}）。请由控制者重新发布殖民地。");
+        Session.Fault($"状态分叉：tick {tick}（{detail}）与其他玩家不一致");
+        Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}，类别 {detail}）。请由控制者重新发布殖民地。");
     }
 
     /// <summary>Applies commands whose tick has arrived. Also used while paused so late commands still land.</summary>

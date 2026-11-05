@@ -34,6 +34,7 @@ internal sealed record WireMessage
     public int SnapshotTick { get; init; }
     public bool Checkpoint { get; init; }
     public bool? CheckpointOwner { get; init; }
+    public string[]? Categories { get; init; }
     public string? WorldId { get; init; }
     public string? UploadId { get; init; }
     public int ChunkCount { get; init; }
