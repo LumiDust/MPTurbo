@@ -22,7 +22,8 @@ public static class Diagnostics
         var names = new Dictionary<string, string>
         {
             ["designation"] = "标记", ["blueprint"] = "建造", ["draft"] = "征召",
-            ["order"] = "指令", ["gate"] = "锁步", ["apply"] = "应用"
+            ["order"] = "指令", ["gate"] = "锁步", ["apply"] = "应用", ["transport"] = "装舱",
+            ["tradeguard"] = "交易限制", ["caravanguard"] = "远行队限制"
         };
         text.AppendLine("补丁 " + string.Join(" ", PatchInstaller.Status
             .Select(pair => (names.TryGetValue(pair.Key, out var label) ? label : pair.Key) + (pair.Value ? "✓" : "✗")))
