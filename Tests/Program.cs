@@ -338,7 +338,7 @@ await Test("shared colony: controller publishes world, starts, and both clients 
     Check(server.WorldManifest?.Id == manifest.Id, "server stores the shared world");
     Check((await guest.GetWorldManifestAsync())?.Id == manifest.Id, "guests see the same world id");
     var started = new TaskCompletionSource<long>();
-    guest.WorldStarted += (epoch, _, _) => started.TrySetResult(epoch);
+    guest.WorldStarted += (session, _) => started.TrySetResult(session.Epoch);
     await controller.StartGameAsync();
     Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "guest receives start");
     var received = new TaskCompletionSource<List<GameCommand>>();
@@ -429,12 +429,110 @@ await Test("a peer joining mid-session receives the epoch, tick and full command
     await using var late = new DedicatedClient();
     var started = new TaskCompletionSource<int>();
     var replay = new List<GameCommand>();
-    late.WorldStarted += (_, tick, _) => started.TrySetResult(tick);
+    late.WorldStarted += (session, _) => started.TrySetResult(session.Tick);
     late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
     await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
     Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "late peer receives the running epoch");
     await Until(() => { lock (replay) return replay.Count == 1; });
     Check(replay[0].Kind == "designation", "history replayed to the late peer");
+});
+
+await Test("session seed reaches every peer and survives a server restart with its history", async () =>
+{
+    var data = Dir("session-persist");
+    var server = new DedicatedServer(new(Port: 0, DataDirectory: data));
+    await server.StartAsync();
+    await using var host = new DedicatedClient();
+    var seeds = new List<int>();
+    host.WorldStarted += (session, _) => seeds.Add(session.Seed);
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    var world = new byte[4096]; new Random(13).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    await Until(() => seeds.Count == 1);
+    await host.SendCommandAsync("designation", "Mine|0|2|3"u8.ToArray());
+    await host.SendCommandAsync("draft", "5|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 2);
+    var epoch = server.Epoch;
+    var seed = seeds[0];
+    await host.DisconnectAsync();
+    await server.StopAsync();
+    await server.DisposeAsync();
+
+    await using var restarted = new DedicatedServer(new(Port: 0, DataDirectory: data));
+    await restarted.StartAsync();
+    Check(restarted.GameRunning && restarted.Epoch == epoch, "epoch resumes after restart");
+    Check(restarted.Session?.Seed == seed, "seed resumes after restart");
+    Check(restarted.HistoryCount == 2, "command history resumes after restart");
+    await using var rejoin = new DedicatedClient();
+    var replay = new List<GameCommand>();
+    rejoin.WorldStarted += (_, _) => { };
+    rejoin.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
+    await rejoin.ConnectAsync("127.0.0.1", restarted.Port, Hello("rejoin"));
+    await Until(() => { lock (replay) return replay.Count == 2; });
+    Check(replay.Select(c => c.Kind).SequenceEqual(new[] { "designation", "draft" }), "history replays in order");
+});
+
+await Test("two peers replaying the same ordered commands derive the same state hash", () =>
+{
+    static List<string> Run(IEnumerable<GameCommand> commands)
+    {
+        // Minimal deterministic model: commands place ids at positions; ordering must define the result.
+        var state = new SortedDictionary<int, string>();
+        var log = new CommandLog();
+        foreach (var command in commands) log.Accept(command);
+        foreach (var command in log.TakeThrough(1000))
+        {
+            var parts = System.Text.Encoding.UTF8.GetString(command.Payload).Split('|');
+            state[int.Parse(parts[0])] = $"{parts[1]}|{parts[2]}";
+        }
+        return state.Select(pair => $"{pair.Key}:{pair.Value}").ToList();
+    }
+    var commands = new[]
+    {
+        new GameCommand(1, 5, "designation", "3|Mine|0"u8.ToArray()),
+        new GameCommand(2, 2, "designation", "1|Haul|0"u8.ToArray()),
+        new GameCommand(3, 9, "designation", "2|Cut|0"u8.ToArray())
+    };
+    var first = Run(commands);
+
+    // Second peer receives the same sequence but drains the log tick by tick instead of all at once.
+    var incremental = new CommandLog();
+    foreach (var command in commands) incremental.Accept(command);
+    var second = new SortedDictionary<int, string>();
+    for (var tick = 0; tick <= 9; tick++)
+        foreach (var command in incremental.TakeThrough(tick))
+        {
+            var parts = System.Text.Encoding.UTF8.GetString(command.Payload).Split('|');
+            second[int.Parse(parts[0])] = $"{parts[1]}|{parts[2]}";
+        }
+    Check(TurboTick.Simulation.StateHash.Compute(first) ==
+          TurboTick.Simulation.StateHash.Compute(second.Select(pair => $"{pair.Key}:{pair.Value}").ToList()),
+        "incremental and bulk draining converge");
+    return Task.CompletedTask;
+});
+
+await Test("after a desync the controller can restart the colony with a fresh epoch", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("recover")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient(); await using var guest = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
+    var world = new byte[4096]; new Random(21).NextBytes(world);
+    var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
+    await host.UploadWorldAsync(manifest, new MemoryStream(world));
+    var epochs = new List<long>();
+    guest.WorldStarted += (session, _) => { lock (epochs) epochs.Add(session.Epoch); };
+    await host.StartGameAsync();
+    await Until(() => { lock (epochs) return epochs.Count == 1; });
+    await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+    // Restart resets history and issues a new epoch; the old commands must not leak into it.
+    await host.StartGameAsync();
+    await Until(() => { lock (epochs) return epochs.Count == 2; });
+    Check(epochs[1] > epochs[0], "restart issues a new epoch");
+    Check(server.HistoryCount == 0, "old commands are cleared");
 });
 
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>

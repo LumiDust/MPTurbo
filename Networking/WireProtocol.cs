@@ -30,6 +30,7 @@ internal sealed record WireMessage
     // Shared-colony session fields (additive; older peers never send or require them).
     public long Epoch { get; init; } = -1;
     public int Tick { get; init; }
+    public int Seed { get; init; }
     public string? WorldId { get; init; }
     public string? UploadId { get; init; }
     public int ChunkCount { get; init; }

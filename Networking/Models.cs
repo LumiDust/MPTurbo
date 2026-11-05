@@ -33,6 +33,9 @@ public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, flo
 
 public sealed record ModFingerprint(string PackageId, string ContentHash);
 public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = "0.3.0");
+
+/// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
+public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId);
 public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 30572, string DataDirectory = "Saved",
     string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true);
 public sealed record SnapshotManifest(string Id, long Length, int ChunkSize, IReadOnlyList<string> ChunkHashes);

@@ -40,7 +40,18 @@ public sealed class DedicatedServer : IAsyncDisposable
     private readonly ConcurrentDictionary<int, string> _firstHashAtTick = new();
     private readonly HashSet<int> _reportedDesyncTicks = [];
     private bool _historyTruncated;
+    private int _seed;
     private const int MaxHistory = 200_000;
+    private int _commandsSincePersist;
+
+    public SessionInfo? Session
+    {
+        get
+        {
+            var world = WorldManifest;
+            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id);
+        }
+    }
 
     public int HistoryCount { get { lock (_history) return _history.Count; } }
     public bool HistoryTruncated { get { lock (_history) return _historyTruncated; } }
@@ -50,7 +61,8 @@ public sealed class DedicatedServer : IAsyncDisposable
     public int Tick => Volatile.Read(ref _tick);
     public bool GameRunning => Volatile.Read(ref _gameRunning) != 0;
 
-    private sealed record SavedState(SpeedPolicy Policy, string? GameVersion, string? ModHash);
+    private sealed record SavedState(SpeedPolicy Policy, string? GameVersion, string? ModHash,
+        SessionInfo? Session = null, List<GameCommand>? History = null, bool HistoryTruncated = false, SnapshotManifest? World = null);
 
     public int Port => Volatile.Read(ref _port);
     public SpeedPolicy CurrentPolicy => Volatile.Read(ref _policy);
@@ -117,6 +129,9 @@ public sealed class DedicatedServer : IAsyncDisposable
         try
         {
             if (_run is null) return;
+            // Persist before shutdown so a restart resumes the same session, not an empty one.
+            try { await PersistSessionAsync(CancellationToken.None).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             await _run.CancelAsync().ConfigureAwait(false);
             _listener?.Stop();
             foreach (var peer in _peers.Values) peer.Close();
@@ -156,6 +171,23 @@ public sealed class DedicatedServer : IAsyncDisposable
         Volatile.Write(ref _policy, policy);
         Volatile.Write(ref _lockedGameVersion, version);
         Volatile.Write(ref _lockedModHash, modHash);
+
+        // Resume the previous session so reconnecting players replay the same decisions.
+        if (saved?.World is { } persistedWorld) Volatile.Write(ref _worldManifest, persistedWorld);
+        if (saved?.Session is { } session && session.Epoch >= 0 && session.Tick >= 0)
+        {
+            Volatile.Write(ref _epoch, session.Epoch);
+            Volatile.Write(ref _tick, session.Tick);
+            Volatile.Write(ref _seed, session.Seed);
+            lock (_history)
+            {
+                _history.Clear();
+                if (saved.History is { Count: > 0 }) _history.AddRange(saved.History);
+                _historyTruncated = saved.HistoryTruncated;
+            }
+            Interlocked.Exchange(ref _commandSequence, _history.Count == 0 ? 0 : _history.Max(c => c.Sequence));
+            Volatile.Write(ref _gameRunning, 1);
+        }
     }
 
     private async Task AcceptLoopAsync(TcpListener listener, CancellationToken ct)
@@ -363,11 +395,17 @@ public sealed class DedicatedServer : IAsyncDisposable
             var epoch = Interlocked.Increment(ref _epoch);
             Interlocked.Exchange(ref _tick, 0);
             Interlocked.Exchange(ref _commandSequence, 0);
+            Volatile.Write(ref _seed, Random.Shared.Next());
+            lock (_history) { _history.Clear(); _historyTruncated = false; }
+            _firstHashAtTick.Clear();
+            lock (_reportedDesyncTicks) _reportedDesyncTicks.Clear();
             Volatile.Write(ref _gameRunning, 1);
+            var seed = Volatile.Read(ref _seed);
             foreach (var recipient in _peers.Values)
                 if (recipient.Joined)
-                    recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world });
+                    recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world, Seed = seed });
             peer.Queue(new WireMessage { Type = "StartedAccepted", RequestId = message.RequestId, Epoch = epoch });
+            await PersistSessionAsync(peer.Token).ConfigureAwait(false);
         }
         finally { _stateGate.Release(); }
     }
@@ -389,6 +427,12 @@ public sealed class DedicatedServer : IAsyncDisposable
                 _historyTruncated = true;
             }
             _history.Add(assigned);
+        }
+        if (++_commandsSincePersist >= 200)
+        {
+            _commandsSincePersist = 0;
+            _ = PersistSessionAsync(peer.Token).ContinueWith(task => { _ = task.Exception; },
+                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         }
         var batch = new List<GameCommand> { assigned };
         foreach (var recipient in _peers.Values)
@@ -422,7 +466,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         var world = WorldManifest;
         var epoch = Epoch;
         if (world is null || epoch < 0) return;
-        peer.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = Tick, WorldId = world.Id, Manifest = world });
+        peer.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = Tick, WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed) });
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];
         for (var offset = 0; offset < snapshot.Count; offset += 200)
@@ -512,6 +556,17 @@ public sealed class DedicatedServer : IAsyncDisposable
 
     private Task SaveStateAsync(SpeedPolicy policy, string? version, string? modHash, CancellationToken ct) =>
         AtomicFile.WriteJsonAsync(_statePath, new SavedState(policy, version, modHash), ct);
+
+    /// <summary>Persists the running session so a restart resumes the same epoch, tick and history.</summary>
+    private Task PersistSessionAsync(CancellationToken ct)
+    {
+        List<GameCommand> history;
+        bool truncated;
+        lock (_history) { history = [.. _history]; truncated = _historyTruncated; }
+        var session = Session;
+        return AtomicFile.WriteJsonAsync(_statePath,
+            new SavedState(CurrentPolicy, LockedGameVersion, LockedModHash, session, history, truncated, WorldManifest), ct);
+    }
 
     private static void RequireRequestId(WireMessage message)
     {

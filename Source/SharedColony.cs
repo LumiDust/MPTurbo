@@ -25,15 +25,28 @@ public static class SharedColony
         Session.Leave();
         SharedActions.ResetTickWork();
         stalledSince = -1f;
+        if (seeded)
+        {
+            try { Rand.PopState(); } catch (Exception error) { Log.Warning("[TurboTick] 恢复随机状态失败：" + error.Message); }
+            seeded = false;
+        }
     }
 
-    public static void OnWorldStarted(long epoch, int tick, SnapshotManifest manifest)
+    private static bool seeded;
+
+    public static void OnWorldStarted(SessionInfo info, SnapshotManifest manifest)
     {
-        Session.BeginLoading(epoch, manifest.Id);
-        Session.Barrier.Publish(tick);
+        Session.BeginLoading(info.Epoch, manifest.Id);
+        Session.Barrier.Publish(info.Tick);
         Session.WorldLoaded();
         Session.Playing();
-        Log.Message($"[TurboTick] 共享殖民地已开始：epoch={epoch} world={manifest.Id}");
+        // Align the global random stream so both peers draw the same sequence for the same tick.
+        if (!seeded)
+        {
+            Rand.PushState(info.Seed);
+            seeded = true;
+        }
+        Log.Message($"[TurboTick] 共享殖民地已开始：epoch={info.Epoch} tick={info.Tick} world={manifest.Id}");
     }
 
     public static void OnTick(int tick) => Session.Barrier.Publish(tick);

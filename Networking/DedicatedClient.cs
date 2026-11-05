@@ -28,7 +28,7 @@ public sealed class DedicatedClient : IAsyncDisposable
 
     public event Action<SpeedPolicy>? PolicyChanged;
     public event Action<string>? StatusChanged;
-    public event Action<long, int, SnapshotManifest>? WorldStarted;
+    public event Action<SessionInfo, SnapshotManifest>? WorldStarted;
     public event Action<int>? Ticked;
     public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
     public event Action<int>? DesyncDetected;
@@ -459,7 +459,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
-                        Publish(session, () => WorldStarted?.Invoke(started.Epoch, started.Tick, started.Manifest!));
+                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? ""), started.Manifest!));
                         break;
                     case "Tick":
                         var tick = message.Tick;

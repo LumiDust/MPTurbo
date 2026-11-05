@@ -51,10 +51,10 @@ internal static class RoomConnection
             Status = text;
             if (!socket.IsConnected) TurboState.Authority.ConnectionLost();
         });
-        socket.WorldStarted += (epoch, tick, manifest) => Post(id, () =>
+        socket.WorldStarted += (session, manifest) => Post(id, () =>
         {
             Status = "共享殖民地已开始，正在同步存档…";
-            SharedColony.OnWorldStarted(epoch, tick, manifest);
+            SharedColony.OnWorldStarted(session, manifest);
             DownloadAndLoad(manifest, id);
         });
         socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
