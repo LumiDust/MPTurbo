@@ -51,6 +51,9 @@ public sealed class DedicatedServer : IAsyncDisposable
     private const int MaxHistory = 200_000;
     private int _commandsSincePersist;
     private readonly object _commandGate = new();
+    private int _hashWindowFloor;
+    private const int HashWindow = 600;
+    public int TrackedHashTicks => _firstHashAtTick.Count;
 
     public SessionInfo? Session
     {
@@ -415,12 +418,16 @@ public sealed class DedicatedServer : IAsyncDisposable
             peer.Queue(WireMessage.Error("InvalidCheckpoint", "The checkpoint tick must be inside the running session.", message.RequestId));
             return;
         }
-        Volatile.Write(ref _checkpointManifest, manifest);
-        Volatile.Write(ref _checkpointTick, message.Tick);
-        lock (_history)
+        // Trim inside the command gate so a command cannot slip in between the trim and the broadcast.
+        lock (_commandGate)
         {
-            _history.RemoveAll(command => command.Tick <= message.Tick);
-            _historyTruncated = false;
+            Volatile.Write(ref _checkpointManifest, manifest);
+            Volatile.Write(ref _checkpointTick, message.Tick);
+            lock (_history)
+            {
+                _history.RemoveAll(command => command.Tick <= message.Tick);
+                _historyTruncated = false;
+            }
         }
         foreach (var recipient in _peers.Values)
             if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Checkpoint", Tick = message.Tick, Manifest = manifest });
@@ -509,6 +516,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         if (!GameRunning || !peer.Joined) return;
         if (message.Tick < 0 || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
         var hash = message.Sha256!;
+        PruneHashWindow(message.Tick);
         if (!_firstHashAtTick.TryGetValue(message.Tick, out var first))
         {
             _firstHashAtTick[message.Tick] = hash;
@@ -534,6 +542,22 @@ public sealed class DedicatedServer : IAsyncDisposable
         }
         foreach (var recipient in _peers.Values)
             if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Desync", Tick = message.Tick, Message = differing });
+    }
+
+    /// <summary>
+    /// Keeps only a recent window of comparison hashes. Without this the dictionaries grow with play time,
+    /// which shows up as slowly increasing memory on a long-running server.
+    /// </summary>
+    private void PruneHashWindow(int newestTick)
+    {
+        if (newestTick - _hashWindowFloor < HashWindow) return;
+        var floor = newestTick - HashWindow;
+        if (floor <= _hashWindowFloor) return;
+        _hashWindowFloor = floor;
+        foreach (var tick in _firstHashAtTick.Keys)
+            if (tick < floor) _firstHashAtTick.TryRemove(tick, out _);
+        foreach (var tick in _firstCategoriesAtTick.Keys)
+            if (tick < floor) _firstCategoriesAtTick.TryRemove(tick, out _);
     }
 
     /// <summary>Sends the current epoch and the full command history to a peer that arrives mid-session.</summary>

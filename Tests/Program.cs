@@ -696,6 +696,21 @@ await Test("five peers submitting concurrently yield one total order with no los
     }
 });
 
+await Test("comparison hashes stay inside a bounded window during a long session", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("window")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello());
+    var world = new byte[2048]; new Random(81).NextBytes(world);
+    await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await a.StartGameAsync();
+    for (var tick = 60; tick <= 6000; tick += 60) await a.ReportHashAsync(tick, new string('a', 64));
+    await Until(() => server.TrackedHashTicks > 0);
+    Check(server.TrackedHashTicks <= 601, $"hash window bounded, tracked {server.TrackedHashTicks}");
+    Check(server.TrackedHashTicks >= 5, "recent history is still available for comparison");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
