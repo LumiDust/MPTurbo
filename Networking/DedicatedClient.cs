@@ -31,6 +31,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<long, int, SnapshotManifest>? WorldStarted;
     public event Action<int>? Ticked;
     public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
+    public event Action<int>? DesyncDetected;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
@@ -307,6 +308,15 @@ public sealed class DedicatedClient : IAsyncDisposable
         ct.ThrowIfCancellationRequested();
     }
 
+    /// <summary>Reports the local state hash for a tick so the server can detect divergence.</summary>
+    public async Task ReportHashAsync(int tick, string sha256, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64) throw new ArgumentException("A full SHA256 hex string is required.", nameof(sha256));
+        var session = ConnectedSession();
+        await session.Connection.WriteAsync(new WireMessage { Type = "ReportHash", Tick = tick, Sha256 = sha256 }, session.Token).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+    }
+
     public async Task DisconnectAsync()
     {
         CancelConnectionAttempt();
@@ -454,6 +464,13 @@ public sealed class DedicatedClient : IAsyncDisposable
                     case "Tick":
                         var tick = message.Tick;
                         Publish(session, () => Ticked?.Invoke(tick));
+                        break;
+                    case "Desync":
+                        var desyncTick = message.Tick;
+                        Publish(session, () => DesyncDetected?.Invoke(desyncTick));
+                        break;
+                    case "CatchUpTruncated":
+                        Publish(session, () => StatusChanged?.Invoke("Catch-up history was truncated; restart the shared colony."));
                         break;
                     case "Commands":
                         if (message.Commands is null) throw new NetworkException("InvalidCommand", "The server sent an empty command batch.");

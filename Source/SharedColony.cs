@@ -66,6 +66,41 @@ public static class SharedColony
         if (!Gating) return;
         Session.Barrier.TryAdvance();
         ApplyDue();
+        if (Session.Barrier.AppliedTick % 60 == 0) ReportHash();
+    }
+
+    /// <summary>Periodic canonical hash so the server can prove all peers still simulate the same colony.</summary>
+    private static void ReportHash()
+    {
+        var tick = Session.Barrier.AppliedTick;
+        try
+        {
+            var hash = StateHash.Compute(DescribeColony());
+            _ = RoomConnection.ReportHash(tick, hash);
+        }
+        catch (Exception error) { Log.Warning("[TurboTick] 状态哈希计算失败：" + error.Message); }
+    }
+
+    private static List<string> DescribeColony()
+    {
+        var entries = new List<string>();
+        foreach (var map in Find.Maps)
+        {
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+                entries.Add(StateHash.Pawn(pawn.thingIDNumber, map.Index, pawn.Position.x, pawn.Position.z,
+                    pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f, pawn.CurJobDef?.defName ?? ""));
+            foreach (var thing in map.listerThings.AllThings)
+                if (thing is not Pawn)
+                    entries.Add(StateHash.Thing(thing.thingIDNumber, map.Index, thing.Position.x, thing.Position.z,
+                        thing.stackCount, thing.HitPoints));
+        }
+        return entries;
+    }
+
+    public static void OnDesync(int tick)
+    {
+        Session.Fault($"状态分叉：tick {tick} 与其他玩家不一致");
+        Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}）。请由控制者重新发布殖民地。");
     }
 
     /// <summary>Applies commands whose tick has arrived. Also used while paused so late commands still land.</summary>

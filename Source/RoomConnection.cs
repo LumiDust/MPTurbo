@@ -59,6 +59,7 @@ internal static class RoomConnection
         });
         socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
+        socket.DesyncDetected += tick => Post(id, () => SharedColony.OnDesync(tick));
         Track(Task.Run(async () =>
         {
             try
@@ -159,6 +160,19 @@ internal static class RoomConnection
             }
             catch (Exception error) { Post(id, () => Status = "下载共享存档失败：" + error.Message); }
         }));
+    }
+
+    public static Task ReportHash(int tick, string sha256)
+    {
+        if (client?.IsConnected != true) return Task.CompletedTask;
+        var socket = client;
+        var token = lifetime!.Token;
+        var id = generation;
+        return Task.Run(async () =>
+        {
+            try { await socket.ReportHashAsync(tick, sha256, token).ConfigureAwait(false); }
+            catch (Exception error) { Post(id, () => Status = "状态校验上报失败：" + error.Message); }
+        });
     }
 
     public static Task SendCommand(string kind, byte[] payload, long sequence)

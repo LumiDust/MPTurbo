@@ -35,6 +35,16 @@ public sealed class DedicatedServer : IAsyncDisposable
     private int _gameRunning;
     private Task _tickTask = Task.CompletedTask;
 
+    // Command history lets a peer that joins mid-session replay the same decisions from the same snapshot.
+    private readonly List<GameCommand> _history = [];
+    private readonly ConcurrentDictionary<int, string> _firstHashAtTick = new();
+    private readonly HashSet<int> _reportedDesyncTicks = [];
+    private bool _historyTruncated;
+    private const int MaxHistory = 200_000;
+
+    public int HistoryCount { get { lock (_history) return _history.Count; } }
+    public bool HistoryTruncated { get { lock (_history) return _historyTruncated; } }
+
     public SnapshotManifest? WorldManifest => Volatile.Read(ref _worldManifest);
     public long Epoch => Interlocked.Read(ref _epoch);
     public int Tick => Volatile.Read(ref _tick);
@@ -240,6 +250,8 @@ public sealed class DedicatedServer : IAsyncDisposable
                 Type = "Welcome", Policy = _policy, CanEdit = peer.CanEdit,
                 GameVersion = version, ModHash = modHash, ClientVersion = NetworkProtocol.ClientVersion
             });
+            // A peer arriving after the start replays the same snapshot plus every order issued since.
+            if (GameRunning) SendCatchUp(peer);
         }
         finally { _stateGate.Release(); }
     }
@@ -292,6 +304,9 @@ public sealed class DedicatedServer : IAsyncDisposable
                 return;
             case "Command":
                 await RelayCommandAsync(peer, message).ConfigureAwait(false);
+                return;
+            case "ReportHash":
+                ReportHash(peer, message);
                 return;
             default: throw new NetworkException("UnknownMessage", "This message is not supported.");
         }
@@ -365,10 +380,54 @@ public sealed class DedicatedServer : IAsyncDisposable
             || command.Payload is null || command.Payload.Length > 64 * 1024)
         { peer.Queue(WireMessage.Error("InvalidCommand", "The command kind or payload is invalid.")); return Task.CompletedTask; }
         var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2, command.Kind, command.Payload);
+        lock (_history)
+        {
+            if (_history.Count >= MaxHistory)
+            {
+                // Keeping the contract honest: once history is dropped, mid-session joins cannot replay it.
+                _history.Clear();
+                _historyTruncated = true;
+            }
+            _history.Add(assigned);
+        }
         var batch = new List<GameCommand> { assigned };
         foreach (var recipient in _peers.Values)
             if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch });
         return Task.CompletedTask;
+    }
+
+    /// <summary>Compares each peer's reported state hash for a tick; the first mismatch is a desync.</summary>
+    private void ReportHash(Peer peer, WireMessage message)
+    {
+        if (!GameRunning || !peer.Joined) return;
+        if (message.Tick < 0 || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
+        var hash = message.Sha256!;
+        if (!_firstHashAtTick.TryGetValue(message.Tick, out var first))
+        {
+            _firstHashAtTick[message.Tick] = hash;
+            return;
+        }
+        if (string.Equals(first, hash, StringComparison.Ordinal)) return;
+        lock (_reportedDesyncTicks)
+        {
+            if (!_reportedDesyncTicks.Add(message.Tick)) return;
+        }
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Desync", Tick = message.Tick });
+    }
+
+    /// <summary>Sends the current epoch and the full command history to a peer that arrives mid-session.</summary>
+    private void SendCatchUp(Peer peer)
+    {
+        var world = WorldManifest;
+        var epoch = Epoch;
+        if (world is null || epoch < 0) return;
+        peer.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = Tick, WorldId = world.Id, Manifest = world });
+        List<GameCommand> snapshot;
+        lock (_history) snapshot = [.. _history];
+        for (var offset = 0; offset < snapshot.Count; offset += 200)
+            peer.Queue(new WireMessage { Type = "Commands", Commands = snapshot.GetRange(offset, Math.Min(200, snapshot.Count - offset)) });
+        if (HistoryTruncated) peer.Queue(new WireMessage { Type = "CatchUpTruncated" });
     }
 
     private async Task GameLoopAsync(CancellationToken ct)

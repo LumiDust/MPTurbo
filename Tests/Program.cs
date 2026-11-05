@@ -384,6 +384,59 @@ await Test("action codec round-trips every player action and rejects malformed p
     return Task.CompletedTask;
 });
 
+await Test("state hash is order independent and changes with simulated state", () =>
+{
+    string[] a = ["t:1:0:5:5:1:100", "p:2:0:7:8:0.75:Haul"];
+    string[] b = ["p:2:0:7:8:0.75:Haul", "t:1:0:5:5:1:100"];
+    Check(TurboTick.Simulation.StateHash.Compute(a) == TurboTick.Simulation.StateHash.Compute(b), "order independent");
+    Check(TurboTick.Simulation.StateHash.Compute(a) != TurboTick.Simulation.StateHash.Compute(["t:1:0:5:5:1:99", "p:2:0:7:8:0.75:Haul"]), "detects change");
+    Check(TurboTick.Simulation.StateHash.Compute(["p:2:0:7:8:0.75:Haul"]).Length == 64, "sha256 hex");
+    return Task.CompletedTask;
+});
+
+await Test("server reports a desync when two peers disagree on the same tick", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("hash")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello());
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
+    var world = new byte[4096]; new Random(9).NextBytes(world);
+    await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await a.StartGameAsync();
+    var desync = new TaskCompletionSource<int>();
+    b.DesyncDetected += tick => desync.TrySetResult(tick);
+    var same = new string('a', 64);
+    await a.ReportHashAsync(60, same);
+    await b.ReportHashAsync(60, same);
+    Check(!desync.Task.IsCompleted, "matching hashes are silent");
+    await b.ReportHashAsync(120, new string('b', 64));
+    await a.ReportHashAsync(120, new string('c', 64));
+    Check(await desync.Task.WaitAsync(TimeSpan.FromSeconds(5)) == 120, "mismatch reported with the tick");
+});
+
+await Test("a peer joining mid-session receives the epoch, tick and full command history", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("catchup")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    var world = new byte[8192]; new Random(11).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+    await using var late = new DedicatedClient();
+    var started = new TaskCompletionSource<int>();
+    var replay = new List<GameCommand>();
+    late.WorldStarted += (_, tick, _) => started.TrySetResult(tick);
+    late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
+    await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
+    Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "late peer receives the running epoch");
+    await Until(() => { lock (replay) return replay.Count == 1; });
+    Check(replay[0].Kind == "designation", "history replayed to the late peer");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
