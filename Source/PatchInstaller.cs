@@ -23,6 +23,7 @@ public static class PatchInstaller
         Try(harmony, "blueprint", typeof(BlueprintCapturePatch));
         Try(harmony, "draft", typeof(DraftCapturePatch));
         Try(harmony, "order", typeof(OrderCapturePatch));
+        Try(harmony, "transport", typeof(TransportCapturePatch));
         Try(harmony, "gate", typeof(TickGatePatch));
         Try(harmony, "apply", typeof(TickApplyPatch));
         // Without the gate a peer could simulate past the server and diverge; without capture nothing syncs.

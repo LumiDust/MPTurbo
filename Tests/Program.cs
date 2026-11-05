@@ -890,6 +890,29 @@ await Test("checkpoint plus delta equals applying the whole history, with no com
     return Task.CompletedTask;
 });
 
+await Test("transport command round-trips and the server accepts the kind", async () =>
+{
+    var command = TurboTick.Simulation.CommandCodec.TransportCommand(31, 77, 5, 1);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeTransport(command.Payload, out var pod, out var thing, out var count)
+        && pod == 31 && thing == 77 && count == 5, "round trip");
+    Check(!TurboTick.Simulation.CommandCodec.TryDecodeTransport("1|2|0"u8.ToArray(), out _, out _, out _), "zero count rejected");
+    Check(!TurboTick.Simulation.CommandCodec.TryDecodeTransport("1|2"u8.ToArray(), out _, out _, out _), "short payload rejected");
+
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("transport")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient(); await using var guest = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
+    var world = new byte[2048]; new Random(111).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    var received = new TaskCompletionSource<GameCommand>();
+    guest.CommandsReceived += commands => received.TrySetResult(commands[0]);
+    await host.SendCommandAsync("transport", command.Payload);
+    var relayed = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(relayed.Kind == "transport", "transport reaches other peers");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

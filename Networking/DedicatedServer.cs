@@ -466,7 +466,7 @@ public sealed class DedicatedServer : IAsyncDisposable
     }
 
     private static readonly HashSet<string> KnownKinds =
-        new(StringComparer.Ordinal) { "designation", "blueprint", "draft", "order" };
+        new(StringComparer.Ordinal) { "designation", "blueprint", "draft", "order", "transport" };
 
     private Task RelayCommandAsync(Peer peer, WireMessage message)
     {

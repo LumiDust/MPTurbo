@@ -31,4 +31,6 @@
   <TurboTick_Diagnostics>Diagnostics (attach when reporting a problem)</TurboTick_Diagnostics>
   <TurboTick_AutoRecover>Auto-recover after a desync</TurboTick_AutoRecover>
   <TurboTick_AutoRecoverDesc>Reconnect and catch up from the server checkpoint when divergence is detected. Off shows a notice only.</TurboTick_AutoRecoverDesc>
+  <TurboTick_Experimental>Experimental: sync transport loading</TurboTick_Experimental>
+  <TurboTick_ExperimentalDesc>Replicates loading items into transport pods. Not verified in game; off by default.</TurboTick_ExperimentalDesc>
 </LanguageData>

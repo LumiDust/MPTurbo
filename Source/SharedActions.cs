@@ -61,6 +61,33 @@ public static class SharedActions
             job.count, SharedColony.NextSequence()));
     }
 
+    /// <summary>
+    /// Transport loading. Experimental: the apply path rebuilds a TransferableOneWay and reuses the same
+    /// method the UI calls, but it has not been exercised in game yet, so it stays behind a switch.
+    /// </summary>
+    public static void CaptureTransport(CompTransporter transporter, TransferableOneWay transferable, int count)
+    {
+        if (Applying || !SharedColony.Session.AcceptsInput) return;
+        if (TurboTickMod.Settings is { experimentalInteractions: false }) return;
+        if (transporter?.parent is not { } pod || transferable?.AnyThing is not { } thing || count <= 0) return;
+        Publish(CommandCodec.TransportCommand(pod.thingIDNumber, thing.thingIDNumber, count, SharedColony.NextSequence()));
+    }
+
+    private static void ApplyTransport(byte[] payload)
+    {
+        if (TurboTickMod.Settings is { experimentalInteractions: false }) return;
+        if (!CommandCodec.TryDecodeTransport(payload, out var transporterId, out var thingId, out var count)) return;
+        var pod = Find.Maps.SelectMany(map => map.listerThings.AllThings)
+            .FirstOrDefault(thing => thing.thingIDNumber == transporterId);
+        var transporter = pod?.TryGetComp<CompTransporter>();
+        var cargo = Find.Maps.SelectMany(map => map.listerThings.AllThings)
+            .FirstOrDefault(thing => thing.thingIDNumber == thingId);
+        if (transporter == null || cargo == null) return;
+        var transferable = new TransferableOneWay();
+        transferable.things.Add(cargo);
+        transporter.AddToTheToLoadList(transferable, count);
+    }
+
     private static void Publish(GameCommand command) => SharedColony.Send(command);
 
     // ---------- apply ----------
@@ -83,6 +110,9 @@ public static class SharedActions
                     break;
                 case CommandCodec.Order:
                     ApplyOrder(command.Payload);
+                    break;
+                case CommandCodec.Transport:
+                    ApplyTransport(command.Payload);
                     break;
                 default:
                     Log.Warning("[TurboTick] 未知共享命令：" + command.Kind);
@@ -173,6 +203,13 @@ internal static class DraftCapturePatch
 
     private static void Postfix(Pawn_DraftController __instance, bool value) =>
         SharedActions.CaptureDraft(PawnRef(__instance), value);
+}
+
+[HarmonyPatch(typeof(CompTransporter), nameof(CompTransporter.AddToTheToLoadList))]
+internal static class TransportCapturePatch
+{
+    private static void Postfix(CompTransporter __instance, TransferableOneWay transferable, int count) =>
+        SharedActions.CaptureTransport(__instance, transferable, count);
 }
 
 [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob))]

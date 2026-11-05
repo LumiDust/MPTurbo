@@ -13,6 +13,7 @@ public static class CommandCodec
     public const string Blueprint = "blueprint";
     public const string Draft = "draft";
     public const string Order = "order";
+    public const string Transport = "transport";
 
     public static GameCommand DesignationCommand(string defName, int map, int x, int z, long sequence) =>
         new(sequence, 0, Designation, Encoding.UTF8.GetBytes($"{defName}|{map}|{x}|{z}"));
@@ -25,6 +26,18 @@ public static class CommandCodec
 
     public static GameCommand OrderCommand(int pawnId, string jobDef, int targetACell, int targetAThing, int targetBCell, int targetBThing, int count, long sequence) =>
         new(sequence, 0, Order, Encoding.UTF8.GetBytes($"{pawnId}|{jobDef}|{targetACell}|{targetAThing}|{targetBCell}|{targetBThing}|{count}"));
+
+    /// <summary>Loading something into a transport pod: which pod, which thing, how many.</summary>
+    public static GameCommand TransportCommand(int transporterId, int thingId, int count, long sequence) =>
+        new(sequence, 0, Transport, Encoding.UTF8.GetBytes($"{transporterId}|{thingId}|{count}"));
+
+    public static bool TryDecodeTransport(byte[] payload, out int transporterId, out int thingId, out int count)
+    {
+        transporterId = thingId = count = 0;
+        return TryDecode(payload, 3, out var p)
+            && int.TryParse(p[0], out transporterId) && int.TryParse(p[1], out thingId)
+            && int.TryParse(p[2], out count) && count > 0;
+    }
 
     public static bool TryDecodeDesignation(byte[] payload, out string defName, out int map, out int x, out int z)
     {
