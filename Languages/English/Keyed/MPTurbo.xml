@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+
+  <MPTurbo_Enable>Enable multiplier</MPTurbo_Enable>
+  <MPTurbo_EnableDesc>When off, the multiplier stays at 1x. HUD and diagnostics still work.</MPTurbo_EnableDesc>
+
+  <MPTurbo_Multiplier>Multiplier: x{0}</MPTurbo_Multiplier>
+
+  <MPTurbo_HostOnly>Only the host can change it</MPTurbo_HostOnly>
+  <MPTurbo_HostOnlyDesc>Disables +/- for non-hosts. This is a client-side guard, not server enforcement.</MPTurbo_HostOnlyDesc>
+
+  <MPTurbo_AutoDownshift>Auto drop to 1x when behind (server-wide)</MPTurbo_AutoDownshift>
+  <MPTurbo_AutoDownshiftDesc>When a client falls behind the threshold, sync the multiplier back to 1x so it can catch up, then restore. This is a synced command affecting everyone - a local-only downshift would desync.</MPTurbo_AutoDownshiftDesc>
+
+  <MPTurbo_Threshold>Catch-up threshold: {0} ticks</MPTurbo_Threshold>
+
+  <MPTurbo_ShowHud>Show HUD</MPTurbo_ShowHud>
+  <MPTurbo_ShowHudDesc>Top-right overlay: current multiplier, ticks behind, worst offenders.</MPTurbo_ShowHudDesc>
+
+  <MPTurbo_MaxRateCap>Rate cap: {0}x</MPTurbo_MaxRateCap>
+
+  <MPTurbo_StatusSolo>Status: Multiplayer not found (single-player mode)</MPTurbo_StatusSolo>
+  <MPTurbo_StatusNoSession>Status: Multiplayer found, not in a session</MPTurbo_StatusNoSession>
+  <MPTurbo_StatusMp>Status: in session, {0} players ({1})</MPTurbo_StatusMp>
+  <MPTurbo_Host>host</MPTurbo_Host>
+  <MPTurbo_Client>client</MPTurbo_Client>
+
+  <MPTurbo_Off>off</MPTurbo_Off>
+  <MPTurbo_CatchingUp>catching up</MPTurbo_CatchingUp>
+  <MPTurbo_Solo>single-player</MPTurbo_Solo>
+  <MPTurbo_Frozen>server paused</MPTurbo_Frozen>
+
+  <MPTurbo_HudMp>{0} players - {1} ticks behind</MPTurbo_HudMp>
+  <MPTurbo_HudSolo>single-player</MPTurbo_HudSolo>
+  <MPTurbo_HudBehind>Falling behind: {0}</MPTurbo_HudBehind>
+  <MPTurbo_HudNoLag>nobody is behind</MPTurbo_HudNoLag>
+
+</LanguageData>

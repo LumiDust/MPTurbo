@@ -1,0 +1,11 @@
+# build
+Source/bin/
+Source/obj/
+*.user
+*.suo
+.vs/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
