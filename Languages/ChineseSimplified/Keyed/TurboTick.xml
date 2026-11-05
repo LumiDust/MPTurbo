@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <TurboTick_Prototype>独立联机协议原型：已接入专用服务器、倍率设置同步和快照缓存。共享殖民地、人物及建造操作同步仍在开发。</TurboTick_Prototype>
+  <TurboTick_Host>服务器地址</TurboTick_Host>
+  <TurboTick_Port>TCP 端口</TurboTick_Port>
+  <TurboTick_Player>玩家名称</TurboTick_Player>
+  <TurboTick_Connect>连接／重连</TurboTick_Connect>
+  <TurboTick_Disconnect>退出房间</TurboTick_Disconnect>
+  <TurboTick_Fingerprint>兼容指纹：{0}</TurboTick_Fingerprint>
+  <TurboTick_Enable>启用额外倍率（默认关闭）</TurboTick_Enable>
+  <TurboTick_EnableDesc>房间内的启用开关、倍率与速率上限一起交由服务端确认；单机设置留在本地。</TurboTick_EnableDesc>
+  <TurboTick_Multiplier>额外倍率：×{0}</TurboTick_Multiplier>
+  <TurboTick_MaxRateCap>总速率上限：{0}x</TurboTick_MaxRateCap>
+  <TurboTick_ApplyRoom>提交给服务器／全体同步</TurboTick_ApplyRoom>
+  <TurboTick_ApplyLocal>应用到本地</TurboTick_ApplyLocal>
+  <TurboTick_ShowHud>显示诊断 HUD</TurboTick_ShowHud>
+  <TurboTick_ShowHudDesc>显示实际完成 TPS、目标 TPS、连接等待状态和服务端设置修订。</TurboTick_ShowHudDesc>
+  <TurboTick_CacheSnapshot>下载／续传服务器快照到缓存</TurboTick_CacheSnapshot>
+  <TurboTick_HudTps>实测 {0} TPS · 目标 {1} TPS</TurboTick_HudTps>
+  <TurboTick_Held>连接等待／中断：暂缓推进。请重连或在设置中退出房间。</TurboTick_Held>
+  <TurboTick_RoomPrototype>房间倍率同步已接通；共享殖民地同步开发中。</TurboTick_RoomPrototype>
+  <TurboTick_Local>未加入房间 · 本地模式</TurboTick_Local>
+  <TurboTick_LowTps>实际 TPS 低于目标；由用户或服务端统一调整倍率。</TurboTick_LowTps>
+  <TurboTick_Disable>关闭额外倍率</TurboTick_Disable>
+  <TurboTick_EnableShort>启用额外倍率</TurboTick_EnableShort>
+</LanguageData>

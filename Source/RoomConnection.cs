@@ -1,0 +1,154 @@
+using System.Collections.Concurrent;
+using TurboTick.Networking;
+using Verse;
+
+namespace TurboTick;
+
+/// <summary>Own network implementation; socket callbacks only enqueue work for the game thread.</summary>
+internal static class RoomConnection
+{
+    private static readonly ConcurrentQueue<Action> gameActions = new();
+    private static readonly List<Task> operations = [];
+    private static DedicatedClient? client;
+    private static CancellationTokenSource? lifetime;
+    private static int generation;
+    public static string Status { get; private set; } = "未连接";
+    public static string Fingerprint { get; private set; } = "尚未生成";
+    public static string SnapshotStatus { get; private set; } = "尚未下载；此阶段只缓存快照，不自动载入游戏";
+    public static bool Busy { get; private set; }
+    public static bool CanEdit => !TurboState.Authority.SessionRequested
+        || (TurboState.Authority.SessionConnected && client?.CanEdit == true);
+
+    public static void Connect(TurboTickSettings settings)
+    {
+        // Must run on the game thread before starting the background hash/connection operation.
+        ManifestInputs inputs;
+        try { inputs = CompatibilityManifest.Capture(); }
+        catch (Exception error) { Status = error.Message; return; }
+        var host = settings.ServerHost.Trim();
+        if (!int.TryParse(settings.ServerPort, out var port) || port is < 1 or > 65535)
+        {
+            Status = "端口须在 1..65535";
+            return;
+        }
+        var name = settings.PlayerName.Trim();
+        if (name.Length is < 1 or > 32) { Status = "玩家名称须为 1..32 字符"; return; }
+        Leave();
+        var id = ++generation;
+        var cancel = lifetime = new CancellationTokenSource();
+        var socket = client = new DedicatedClient();
+        TurboState.Authority.BeginSession();
+        Status = "计算兼容性指纹…（程序集、Def/Patch、模组顺序与配置）";
+        Busy = true;
+        var exportFile = Path.Combine(GenFilePaths.ConfigFolderPath, "TurboTick", "compatibility-manifest.json");
+        socket.PolicyChanged += policy => Post(id, () =>
+        {
+            TurboState.Authority.ApplyServer(policy);
+            Status = "房间已连接 · 服务端设置修订 " + policy.Revision;
+        });
+        socket.StatusChanged += text => Post(id, () =>
+        {
+            Status = text;
+            if (!socket.IsConnected) TurboState.Authority.ConnectionLost();
+        });
+        Track(Task.Run(async () =>
+        {
+            try
+            {
+                var hello = CompatibilityManifest.Build(inputs, name, exportFile, cancel.Token);
+                Post(id, () => { Fingerprint = hello.ModHash; Status = "指纹已生成，连接服务器…"; });
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
+                timeout.CancelAfter(TimeSpan.FromSeconds(15));
+                await socket.ConnectAsync(host, port, hello, timeout.Token).ConfigureAwait(false);
+                Post(id, () =>
+                {
+                    if (socket.CurrentPolicy != null) TurboState.Authority.ApplyServer(socket.CurrentPolicy);
+                    Status = "房间已连接 · 倍率由专用服务器管理（共享殖民地同步开发中）";
+                });
+            }
+            catch (Exception error)
+            {
+                Post(id, () => { TurboState.Authority.ConnectionLost(); Status = "连接未完成：" + error.Message; });
+            }
+            finally { Post(id, () => Busy = false); }
+        }));
+    }
+
+    public static void Request(bool enabled, float multiplier, float maxRate)
+    {
+        if (!TurboState.Authority.SessionRequested)
+        {
+            try
+            {
+                TurboState.Authority.SetLocal(enabled, multiplier, maxRate);
+                var s = TurboTickMod.Settings;
+                s.enabled = enabled;
+                s.multiplier = multiplier;
+                s.maxRateCap = maxRate;
+            }
+            catch (Exception error) { Status = error.Message; }
+            return;
+        }
+        if (client?.IsConnected != true || !CanEdit) { Status = "等待服务端连接/控制权限；本地设置保持不变"; return; }
+        var socket = client;
+        var id = generation;
+        var token = lifetime!.Token;
+        Track(Task.Run(async () =>
+        {
+            try { await socket.SetSpeedAsync(enabled, multiplier, maxRate, token).ConfigureAwait(false); }
+            catch (Exception error) { Post(id, () => Status = "设置未确认：" + error.Message); }
+        }));
+    }
+
+    public static void CacheSnapshot()
+    {
+        if (client?.IsConnected != true) { SnapshotStatus = "先连接服务器"; return; }
+        var socket = client;
+        var id = generation;
+        var token = lifetime!.Token;
+        var cache = Path.Combine(GenFilePaths.SaveDataFolderPath, "TurboTickCache");
+        SnapshotStatus = "请求快照清单…";
+        Track(Task.Run(async () =>
+        {
+            try
+            {
+                var manifest = await socket.GetSnapshotManifestAsync(token).ConfigureAwait(false);
+                if (manifest == null) { Post(id, () => SnapshotStatus = "服务器尚未导入快照"); return; }
+                var path = Path.Combine(cache, manifest.Id + ".snapshot");
+                await socket.DownloadSnapshotAsync(manifest, path, (done, total) =>
+                    Post(id, () => SnapshotStatus = $"缓存 {done / 1024}/{total / 1024} KiB"), token).ConfigureAwait(false);
+                Post(id, () => SnapshotStatus = "校验完成，已缓存；未替换当前游戏存档");
+            }
+            catch (Exception error) { Post(id, () => SnapshotStatus = "快照下载中断，可重试续传：" + error.Message); }
+        }));
+    }
+
+    public static void Leave()
+    {
+        ++generation; // Drop all queued actions from an old socket, including late disconnect events.
+        lifetime?.Cancel();
+        lifetime?.Dispose();
+        lifetime = null;
+        var old = client;
+        client = null;
+        if (old != null) Track(Task.Run(async () => await old.DisposeAsync().ConfigureAwait(false)));
+        TurboState.Authority.LeaveSession();
+        Status = "未连接";
+        Busy = false;
+    }
+
+    public static void Pump()
+    {
+        // Bound per-frame work so a large snapshot's progress reports cannot stall GUI indefinitely.
+        for (int n = 0; n < 128 && gameActions.TryDequeue(out var action); n++)
+            try { action(); } catch (Exception error) { Log.Warning("[TurboTick] " + error.Message); }
+        operations.RemoveAll(task => task.IsCompleted);
+    }
+
+    private static void Post(int id, Action action) => gameActions.Enqueue(() => { if (id == generation) action(); });
+    private static void Track(Task task)
+    {
+        // All task bodies handle their errors; this extra observer also covers Dispose failures.
+        operations.Add(task.ContinueWith(t => { if (t.Exception != null) _ = t.Exception; }, TaskScheduler.Default));
+    }
+}

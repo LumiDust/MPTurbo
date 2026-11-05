@@ -1,14 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 1.7 / Waylith：只用 .NET 10，不再做 1.6 及以下 -->
     <TargetFramework>net10.0</TargetFramework>
     <LangVersion>latest</LangVersion>
-    <AssemblyName>MPTurbo</AssemblyName>
-    <RootNamespace>MPTurbo</RootNamespace>
-    <Version>0.1.0</Version>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <AssemblyName>TurboTick</AssemblyName>
+    <RootNamespace>TurboTick</RootNamespace>
+    <Version>0.3.0</Version>
+    <AssemblyVersion>0.3.0.0</AssemblyVersion>
+    <FileVersion>0.3.0.0</FileVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
     <OutputPath>..\1.7\Assemblies\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
@@ -17,16 +18,21 @@
     <DebugType>none</DebugType>
     <Deterministic>true</Deterministic>
     <!--
-      1.7 的四个程序集：Assembly-CSharp / RimWorld / Waylith / UnityStubs（没有 UnityEngine.*.dll）
+      1.7（Waylith / .NET 10）四个程序集：Assembly-CSharp / RimWorld / Waylith / UnityStubs
       两种来源，任选其一：
-      1) 默认：NuGet 的 Krafs.Rimworld.Ref（1.7 线目前是预发布版本）
+      1) 默认：NuGet 的 Krafs.Rimworld.Ref（1.7 预发布线）
       2) 离线：/p:RimWorldDir=<解包后的 ref/net10.0 目录>
     -->
     <UseLocalRefs Condition="'$(RimWorldDir)'!=''">true</UseLocalRefs>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 1.7 = Harmony 3（.NET 10）。只引用编译期，运行期由 brrainz.harmony 提供 -->
+    <ProjectReference Include="../Networking/TurboTick.Networking.csproj" />
+    <ProjectReference Include="../Simulation/TurboTick.Simulation.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 1.7 = Harmony 3。只引用编译期，运行期由 brrainz.harmony 提供 -->
     <PackageReference Include="Lib.Harmony" Version="3.0.0-rc.4" ExcludeAssets="runtime" />
     <PackageReference Include="Krafs.Rimworld.Ref" Version="1.7.4998-unstable" Condition="'$(UseLocalRefs)'!='true'" />
   </ItemGroup>

@@ -7,22 +7,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-test-package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # 1.7 = .NET 10
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-
-      # 引用程序集来自 NuGet 的 Krafs.Rimworld.Ref（1.7 预发布线），不需要游戏本体
-      - name: Build
-        run: dotnet build Source/MPTurbo.csproj -c Release
-
-      - name: Upload assembly
+      - name: Build, integration tests, package
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - name: Upload mod and independent server
         uses: actions/upload-artifact@v4
         with:
-          name: MPTurbo-1.7
-          path: 1.7/Assemblies/MPTurbo.dll
+          name: TurboTick-0.3.0-1.7
+          path: artifacts/*.zip
+          if-no-files-found: error

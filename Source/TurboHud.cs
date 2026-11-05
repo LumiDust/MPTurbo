@@ -1,92 +1,45 @@
-using System.Collections.Generic;
 using UnityEngine;
 using Verse;
+using static TurboTick.TurboTickSettings;
 
-namespace MpTurbo
+namespace TurboTick;
+
+public static class TurboHud
 {
-    /// <summary>
-    /// 右上角小面板：当前倍率、落后多少 tick、谁在拖后腿，以及三个按钮（-、+、1x）。
-    /// 全部走 GameComponentOnGUI，不补任何 UI 方法，避免和其它 HUD mod 抢补丁点。
-    /// </summary>
-    public static class TurboHud
+    public static void Draw()
     {
-        const float Width = 268f;
-        const float LineH = 20f;
-
-        static readonly List<string> tmp = new List<string>();
-
-        public static void Draw()
+        var s = TurboTickMod.Settings;
+        if (s == null || !s.showHud || Current.ProgramState != ProgramState.Playing) return;
+        var oldFont = Text.Font;
+        try
         {
-            var s = MpTurboMod.Settings;
-            if (s == null || !s.showHud) return;
-            if (Current.ProgramState != ProgramState.Playing) return;
-
-            bool detail = s.hudDetail > 0 && MpBridge.IsInMultiplayer;
-            int lines = 2 + (detail ? 1 : 0);
-            float height = LineH * lines + 34f;
-
-            var rect = new Rect(UI.screenWidth - Width - 8f, 8f, Width, height);
-            Widgets.DrawBoxSolid(rect, new Color(0f, 0f, 0f, 0.55f));
-
-            var inner = rect.ContractedBy(6f);
-            float y = inner.y;
-
-            // 标题行
-            string eff = TurboState.EffectiveMultiplier.ToString("0.0");
-            string suffix = !s.enabled ? "MPTurbo_Off".Translate().ToString()
-                : TurboState.AutoActive ? "MPTurbo_CatchingUp".Translate().ToString()
-                : !MpBridge.MpPresent ? "MPTurbo_Solo".Translate().ToString()
-                : MpBridge.Frozen ? "MPTurbo_Frozen".Translate().ToString()
-                : "";
-
-            var title = new Rect(inner.x, y, inner.width, LineH);
+            var panel = new Rect(Math.Max(8, UI.screenWidth - 360), 82, 350, 154);
+            Widgets.DrawBoxSolid(panel, new Color(0f, 0f, 0f, 0.72f));
+            var area = panel.ContractedBy(8);
+            var policy = TurboState.Authority.Current;
             Text.Font = GameFont.Small;
-            Widgets.Label(title, "MP Turbo  ×" + eff + (suffix.Length > 0 ? "  [" + suffix + "]" : ""));
-            y += LineH;
-
-            // 状态行
+            Widgets.Label(new Rect(area.x, area.y, area.width, 24), $"TurboTick ×{TurboState.EffectiveMultiplier:0.0}  r{policy.Revision}");
             Text.Font = GameFont.Tiny;
-            string status;
-            if (MpBridge.IsInMultiplayer)
-                status = "MPTurbo_HudMp".Translate(MpBridge.PlayerCount, MpBridge.Lag).ToString();
-            else
-                status = "MPTurbo_HudSolo".Translate().ToString();
-            Widgets.Label(new Rect(inner.x, y, inner.width, LineH), status);
-            y += LineH;
+            Widgets.Label(new Rect(area.x, area.y + 25, area.width, 20),
+                T("TurboTick_HudTps", TurboState.MeasuredTps.ToString("0"), TurboState.TargetTps.ToString("0")));
+            Widgets.Label(new Rect(area.x, area.y + 45, area.width, 40),
+                TurboState.Authority.IsHeld ? T("TurboTick_Held")
+                : TurboState.Authority.SessionConnected ? T("TurboTick_RoomPrototype")
+                : T("TurboTick_Local"));
+            if (TurboState.Behind)
+                Widgets.Label(new Rect(area.x, area.y + 85, area.width, 18), T("TurboTick_LowTps"));
 
-            // 拖后腿的人
-            if (detail)
-            {
-                MpBridge.WorstBehind(2, tmp);
-                string who = tmp.Count > 0
-                    ? "MPTurbo_HudBehind".Translate(string.Join(", ", tmp.ToArray())).ToString()
-                    : "MPTurbo_HudNoLag".Translate().ToString();
-                Widgets.Label(new Rect(inner.x, y, inner.width, LineH), who);
-            }
-
-            // 按钮
-            float by = rect.yMax - 26f;
-            float bw = 54f;
-            bool can = MpSync.CanEdit;
-
-            // 未启用时，第一个位置变成「启用」开关——避免用户还要去设置里找
-            if (!s.enabled)
-            {
-                if (Widgets.ButtonText(new Rect(inner.x, by, bw + 60f, 22f),
-                        "MPTurbo_TurnOn".Translate().ToString(), true, true, can))
-                    s.enabled = true;
-            }
-            else
-            {
-                if (Widgets.ButtonText(new Rect(inner.x, by, bw, 22f), "-", true, true, can))
-                    MpSync.Step(-1f);
-                if (Widgets.ButtonText(new Rect(inner.x + bw + 4f, by, bw, 22f), "+", true, true, can))
-                    MpSync.Step(1f);
-                if (Widgets.ButtonText(new Rect(inner.x + (bw + 4f) * 2f, by, bw + 12f, 22f), "1x", true, true, can))
-                    MpSync.SetMultiplier(1f);
-            }
-
-            Text.Font = GameFont.Small;
+            float y = area.y + 106;
+            bool edit = RoomConnection.CanEdit;
+            if (Widgets.ButtonText(new Rect(area.x, y, 118, 25), T(policy.Enabled ? "TurboTick_Disable" : "TurboTick_EnableShort"), true, true, edit))
+                TurboState.Request(!policy.Enabled, policy.Multiplier, policy.MaxRate);
+            if (Widgets.ButtonText(new Rect(area.x + 124, y, 48, 25), "-", true, true, edit))
+                TurboState.Request(policy.Enabled, Math.Max(1f, policy.Multiplier - 1f), policy.MaxRate);
+            if (Widgets.ButtonText(new Rect(area.x + 178, y, 48, 25), "+", true, true, edit))
+                TurboState.Request(policy.Enabled, Math.Min(20f, policy.Multiplier + 1f), policy.MaxRate);
+            if (Widgets.ButtonText(new Rect(area.x + 232, y, 75, 25), "1x", true, true, edit))
+                TurboState.Request(policy.Enabled, 1f, policy.MaxRate);
         }
+        finally { Text.Font = oldFont; }
     }
 }

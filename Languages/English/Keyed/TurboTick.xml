@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LanguageData>
+  <TurboTick_Prototype>Independent multiplayer protocol prototype: dedicated connection, speed settings sync and snapshot cache. Shared-colony, pawn and building command replication are still in development.</TurboTick_Prototype>
+  <TurboTick_Host>Server address</TurboTick_Host>
+  <TurboTick_Port>TCP port</TurboTick_Port>
+  <TurboTick_Player>Player name</TurboTick_Player>
+  <TurboTick_Connect>Connect / reconnect</TurboTick_Connect>
+  <TurboTick_Disconnect>Leave room</TurboTick_Disconnect>
+  <TurboTick_Fingerprint>Compatibility fingerprint: {0}</TurboTick_Fingerprint>
+  <TurboTick_Enable>Enable extra multiplier (off by default)</TurboTick_Enable>
+  <TurboTick_EnableDesc>In a room, enabled state, multiplier and cap require server confirmation together. Single-player preferences stay local.</TurboTick_EnableDesc>
+  <TurboTick_Multiplier>Extra multiplier: x{0}</TurboTick_Multiplier>
+  <TurboTick_MaxRateCap>Total rate cap: {0}x</TurboTick_MaxRateCap>
+  <TurboTick_ApplyRoom>Submit to server / synchronize room</TurboTick_ApplyRoom>
+  <TurboTick_ApplyLocal>Apply locally</TurboTick_ApplyLocal>
+  <TurboTick_ShowHud>Show diagnostics HUD</TurboTick_ShowHud>
+  <TurboTick_ShowHudDesc>Actual completed TPS, target TPS, connection holds and server policy revision.</TurboTick_ShowHudDesc>
+  <TurboTick_CacheSnapshot>Download / resume server snapshot cache</TurboTick_CacheSnapshot>
+  <TurboTick_HudTps>Actual {0} TPS / target {1} TPS</TurboTick_HudTps>
+  <TurboTick_Held>Connection pending / lost: simulation held. Reconnect or leave the room in settings.</TurboTick_Held>
+  <TurboTick_RoomPrototype>Room speed settings connected; shared-colony replication in development.</TurboTick_RoomPrototype>
+  <TurboTick_Local>Not in a room / local mode</TurboTick_Local>
+  <TurboTick_LowTps>Below target TPS. Adjust the speed through the user or server.</TurboTick_LowTps>
+  <TurboTick_Disable>Disable extra speed</TurboTick_Disable>
+  <TurboTick_EnableShort>Enable extra speed</TurboTick_EnableShort>
+</LanguageData>

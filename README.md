@@ -1,148 +1,96 @@
-# MP Turbo
+# TurboTick：RimWorld 1.7 独立联机项目
 
-给 [Multiplayer](https://steamcommunity.com/sharedfiles/filedetails/?id=2606448745)（环世界联机 mod）用的**时间倍率 + 全员同步 + 等待诊断**小 mod。
+目标是 **独立的专用服务器＋共享殖民地联机 mod**。Multiplayer 和 RimWorld Together 仅作研究参考；本项目既不订阅它们，也不引用它们的 DLL、同步 API、运行时类名或服务器程序。
 
-**只支持 RimWorld 1.7（Waylith 引擎 / .NET 10）。** 不做 1.6 及以下。
+> 当前版本 **0.3.0 · 协议原型**。已实现专用服务器、真实 TCP 客户端、权威倍率设置同步、兼容性握手及快照分块缓存。**共同载入同一殖民地、人物/建造命令复制、确定性 tick 与掉线状态追赶尚未完成**。此版本不是完整可玩的联机替代品。
 
-- 倍率：在游戏当前速度上再乘 **1–20 倍**（默认 2x，**默认关闭，必须手动打开**）。
-- 同步：任何一个人改倍率，**全服同步**；可设为仅房主可改。
-- 等待：右上角 HUD 显示落后多少 tick、谁在拖后腿；可选「落后自动降回 1x」。
-- 兼容：**不引用 Multiplayer 的任何程序集**，全部走反射；没装 MP 时退化成单机倍率。
+仓库沿用历史地址 [LumiDust/MPTurbo](https://github.com/LumiDust/MPTurbo)，实际项目、程序集与包 ID 已使用 TurboTick。早期把项目做成附属倍速插件的代码已移除。
 
-> **为什么不默认开**：装个 mod 就悄悄把游戏变成 2 倍速是很糟糕的体验，也会让"卡顿是不是 mod 导致的"变得难以排查。所以默认 `enabled = false`，HUD 上有一个「启用倍率」按钮，一键开。
+## 当前能力
 
----
-
-## 1. 它解决什么问题
-
-Multiplayer 是确定性锁步：所有人跑同一份世界，靠命令流对齐。它自带 1x/3x/6x/15x 四档速度，但：
-
-- 后期单 tick 变贵，15x 往往跑不动，玩家想要"2x/3x 这种中间档"；
-- 多人时没人愿意为了等一个人把速度调回 1x；
-- 出问题时看不出"到底是谁在拖后腿"。
-
-MP Turbo 就是把这三件事补上：**中间档倍率**、**倍率全员同步**、**等待可视化**。
-
----
-
-## 2. 安装
-
-1. 订阅 [Harmony](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)（1.7 上是 Harmony 3）。
-2. 把本 mod 目录放进 `<游戏根>/Mods/`（或订阅创意工坊版本）。
-3. mod 列表里放在 **Core / DLC / Harmony / Multiplayer 之后**。
-4. **联机时所有玩家都要装**——MP 会校验 mod 列表，缺一个进不来；这也是保证倍率一致的前提。
-
----
-
-## 3. 怎么用
-
-| 操作 | 位置 |
+| 能力 | 本阶段状态 |
 |---|---|
-| 开/关倍率 | 选项 → Mod 设置 → MP Turbo → 「启用倍率」，或 HUD 上的「启用倍率」按钮 |
-| 调倍率 | 同上滑块，或 HUD 的 `-` / `+` / `1x` |
-| 仅房主可改 | Mod 设置 → 「仅房主可改倍率」 |
-| 自动降速 | Mod 设置 → 「落后时自动降回 1x（全服）」 |
-| 看谁在拖后腿 | 右上角 HUD（可关） |
+| 自有专用服务器（.NET 10） | 已实现；运行不需要游戏或另外两个联机 mod |
+| RimWorld 1.7 客户端连接页 | 已编译；地址、端口、名称、连接状态、重连/离开 |
+| 一人改倍率，全员收到 | 已用两个真实 TCP 客户端验证 |
+| 启用开关＋倍率值＋上限 | 同一服务端修订内广播；默认关闭，显式开启后生效 |
+| 谁可以修改 | 默认每位已加入玩家；`--controller-only` 由服务器分配控制者并强制权限 |
+| 兼容性 | 完整 1.7 build、协议/客户端版本、模组顺序/代码/Def/Patch/配置指纹精确检查 |
+| 已完成快照缓存命中 | 长度＋完整 SHA256 验证后直接使用本地文件，零块下载 |
+| 中断下载续传 | 256 KiB 分块；逐块校验 `.part`，只重新获取缺失或损坏块 |
+| 真实 TPS | 已完成 tick 的增量除以墙钟时间；暂停不显示虚假的高 TPS |
+| 共同操作殖民地 | 开发中，见 [ROADMAP.md](docs/ROADMAP.md) |
 
-倍率是**叠加**在当前速度上的：当前 3x（Fast）+ 倍率 2x = 实际 6x。
+## 编译与测试
 
----
-
-## 4. 实现（为什么只补一个点）
-
-原版的速度本来就是"倍率"：`TickManager.TickRateMultiplier` 返回 1/3/6/15。Multiplayer 把它换成了每张地图一份的 `AsyncTimeComp.TickRateMultiplier(TimeSpeed)`，世界层是 `AsyncWorldTimeComp.TickRateMultiplier(TimeSpeed)`，而 `TickPatch.ActualRateMultiplier` 正是从这两个方法取速率。
-
-所以本 mod 只做一件事：**在这两个方法的返回值上乘系数**。
-
-```csharp
-// 装了 MP：补 MP 的两个 comp（反射找方法，不引用程序集）
-harmony.Patch(AccessTools.Method("Multiplayer.Client.AsyncTimeComp:TickRateMultiplier"),
-              postfix: new HarmonyMethod(typeof(TickRatePatches), nameof(MpPostfix)));
-
-// 没装 MP：补原版 getter
-harmony.Patch(AccessTools.Method(typeof(TickManager), "get_TickRateMultiplier"),
-              postfix: new HarmonyMethod(typeof(TickRatePatches), nameof(VanillaPostfix)));
-```
-
-好处：
-
-- 与 MP 自己的 Fast/Superfast/Ultrafast 走**同一条路径**，命令调度、desync 校验都不用动；
-- 不碰 tick 主循环、不碰 Scribe/存档结构、不碰 UI；
-- MP 换版本最多让"找不到方法"这条 warning 出现，mod 其余功能照常。
-
-同步用一个方法：
-
-```csharp
-MP.RegisterSyncMethod(typeof(MpSync), nameof(SetMultiplier));   // 反射调用，参数 null
-public static void SetMultiplier(float value) { ... }           // 注册后：本地调用 → 广播 → 全员执行
-```
-
-### 4.1 1.7 特有的适配点
-
-| 项 | 1.7 的实际情况 | 处理 |
-|---|---|---|
-| 目标框架 | `.NET 10`，程序集 `Assembly-CSharp` + `RimWorld` + `Waylith` + `UnityStubs` | csproj 只引这四个，**不引 `UnityEngine.*.dll`**（1.7 没有） |
-| Harmony | Harmony 3（`Lib.Harmony 3.0.0-rc.4`） | 编译期 `ExcludeAssets="runtime"`，运行期由 `brrainz.harmony` 提供 |
-| `GenTypes.GetTypeInAnyAssembly` | 1.7 的公开签名是 `(string, string)`（第二参为命名空间提示） | 调用传 `null` |
-| `UnityEngine.Time` | 由 `UnityStubs.dll` 提供，成员名在版本间会漂 | 不用它，改用 BCL 的 `Stopwatch`（`Source/Clock.cs`） |
-| 目录分流 | `LoadFolders.xml` 用 `<v1.7>` | 根目录放 About/Defs/Languages，`1.7/Assemblies` 放 dll |
-
----
-
-## 5. 已知限制（重要）
-
-1. **只放大"地图/世界的 tick 倍率"，不放大全局 tick 计数器。** 少数以 `Find.TickManager.TicksGame` 计时的系统（部分任务/事件）不会跟着变快——这与 MP 里用 15x 的表现一致，不是本 mod 引入的。
-2. **强制正常速度（袭击/事件）也会被乘。** 原版 `slower.ForcedNormalSpeed` 会把速率压到 1，本 mod 会把它乘上去；如果你希望威胁时强制 1x，请把倍率手动调回 1x。
-3. **自动降速是全服行为。** 倍率必须全员一致，任何"只降自己"的做法都会 desync，所以自动降速走的是同步命令。
-4. **不能防止有人绕过 UI 直接发命令。** 「仅房主可改」是客户端约束，不是服务器强制（MP 没有暴露权限 API）。
-5. **1.7 的 Multiplayer 本身还不是官方支持状态。** 官方仓库 `supportedVersions` 仍只有 1.6，工坊上的 1.7 版本是社区移植/临时版。若你用的移植版改了协议，本 mod 的同步注册可能失效（会降级为本地倍率 → 联机 desync，日志有 warning）。
-6. **与 RimWorld Together 不兼容。** Together 不走 MP 的同步通道，装了也没意义。
-
-### 5.1 与工坊上已有 mod 的关系
-
-2026-11-05 的工坊调研（218 个 ID 全量核验，见工作区 `docs/workshop-survey.md`）发现一个功能重叠项：
-
-| ID | 名称 | 最后更新 | 与本 mod 的差异 |
-|---|---|---|---|
-| `2902186466` | Multiplayer - Custom Tickrates | 2024-09-04 | 同为"联机改 tick 速率"。本 mod 额外提供：倍率**全员同步**（任意人可改，可设仅房主）、**落后诊断 HUD**、**落后自动降速**、**零编译期依赖 MP** |
-
-另外相关但不同层：`3797749592`（Desync Fix）、`3830002705`（Desync Probe）做的是哈希级 desync 诊断，本 mod 只显示 `ticksBehind`/`latency`/落后 tick，不重叠；`3812768044`（Host Settings Sync）同步的是房主设置，本 mod 同步的是倍率这一个值。
-
-> 若 `2902186466` 已经做了同步，本 mod 的定位应收缩为"诊断 + 自动降速 + 兼容守护"。核对该 mod 的实现是下一步（见 `docs/COMPAT.md`）。
-
----
-
-## 6. 编译
+只面向 **RimWorld 1.7 / Waylith / .NET 10 / Harmony 3**。
 
 ```powershell
-# 需要 .NET 10 SDK（1.7 = net10.0）
-# 默认：从 NuGet 拉 Krafs.Rimworld.Ref（1.7 预发布线），不需要装游戏，CI 也是这么编的
-cd Source
-dotnet build -c Release
+# .NET 10 SDK；运行目录为仓库根
+# 游戏引用由 NuGet Krafs.Rimworld.Ref 提供，无需游戏本体参与编译。
+dotnet build Source/TurboTick.csproj -c Release
+dotnet run --project Tests/TurboTick.Tests.csproj -c Release
 
-# 离线：自己指定 1.7 的引用程序集目录（解包 Krafs.Rimworld.Ref 的 ref/net10.0）
-dotnet build -c Release /p:RimWorldDir="<ref/net10.0 目录>"
-# 产物：..\1.7\Assemblies\MPTurbo.dll
+# 补充的网络生命周期、坏块续传与事件回调竞态验证
+dotnet run --project Server/Verification/TurboTick.Networking.Verification.csproj -c Release
+
+# 离线引用程序集路径
+# dotnet build Source/TurboTick.csproj -c Release /p:RimWorldDir="<ref/net10.0>"
+
+# 构建、全部测试、生成 mod 与 server 两个 zip
+pwsh scripts/package.ps1
 ```
 
-> 当前状态：**编译通过（net10.0，0 warning / 0 error，NuGet 与离线两条路都验过），尚未在实机（1.7 + Multiplayer）里跑过**。
-> 首次实机验证请按 `docs/COMPAT.md` §4 的自测清单走一遍，重点看第 3 条（双端倍率同步）与第 6 条（自动降速）。
+源码测试不装游戏也能运行；游戏内 HUD、载入顺序、真实操作手感仍需 RimWorld 1.7 实机验收。CI 构建成功不等于游戏内运行已经验收。
 
----
+## 启动独立服务器
 
-## 7. 目录
+```powershell
+dotnet run --project Server/TurboTick.Server.csproj -c Release -- --host 127.0.0.1 --port 30572 --data Saved
 
+# 仅控制者可改倍率
+# ... --controller-only
+
+# 固定房间兼容性；避免第一次连接决定房间身份
+# ... --game-version 1.7.4998 --mod-hash <兼容指纹>
+
+# 导入本地文件供客户端缓存/续传测试；当前不会自动把文件作为游戏存档载入
+# ... --import "<snapshot-file>"
 ```
-MPTurbo/
-├─ About/About.xml
-├─ LoadFolders.xml               # <v1.7> → / + 1.7
-├─ 1.7/Assemblies/MPTurbo.dll    # 构建产物（net10.0）
-├─ Languages/{ChineseSimplified,English}/Keyed/MPTurbo.xml
-├─ Source/                       # 见 docs/COMPAT.md 的分层说明
-├─ docs/COMPAT.md                # 兼容性与"等待"处理方案（设计文档）
-└─ README.md
+
+默认只监听本机。`--host 0.0.0.0` 可用于可信局域网或受控隧道联调；当前协议尚未加入账号认证和 TLS，公网发行前需补齐。
+
+默认配置 `--game-version 1.7 --mod-hash development` 会把**第一位成功加入者的完整游戏 build 和模组指纹锁定并持久化**，后续玩家精确匹配。锁定信息在服务器日志中显示。要换 modpack，应显式建立新的数据目录或按迁移流程更新房间状态，避免与旧快照混用。
+
+## 游戏端使用
+
+1. 将 mod 包中的 `TurboTick/` 放入游戏 `Mods/`，启用 Harmony 及本 mod。客户端唯一额外 mod 依赖为 `brrainz.harmony`。
+2. 打开「选项 → Mod 设置 → TurboTick · 独立联机」。填写服务器地址、端口、玩家名称。
+3. 点击「连接／重连」。客户端先在后台生成兼容指纹，再完成握手；TCP 建连本身不算成功。
+4. 额外倍率默认关闭。编辑启用开关、倍率、上限后点击「提交给服务器／全体同步」；HUD 的按钮同样只发请求，收到权威修订才应用。
+5. 断线/握手失败保持等待，防止回退到某台机器自己的倍率。显式点击「退出房间」后恢复本地模式。
+6. 「下载／续传服务器快照到缓存」只下载并校验文件，**不替换当前存档**。缓存位于游戏存档数据目录下 `TurboTickCache/`。
+
+倍率以当前原版速率为基数，例如原版 3x、额外 2x→总计 6x，并受服务器上限约束。暂停及原版威胁强制常速保留。任何与仿真有关的设置都不再走每端本地覆盖；自动单端降速已经移除。
+
+## 数据与依赖
+
+```text
+Source/        RimWorld 1.7 接入、设置页、主线程队列、指纹采集、HUD
+Networking/    自有 TCP 协议、客户端、权威房间、快照内容寻址与下载
+Simulation/    速率权威状态与 TPS 测量（不引用游戏）
+Server/        独立控制台程序
+Tests/         真实多客户端与打包验收测试
+1.7/Assemblies/
+    TurboTick.dll
+    TurboTick.Networking.dll
+    TurboTick.Simulation.dll
 ```
 
-## 8. 许可
+服务器持久化 `server-state.json`（兼容锁＋倍率修订）和 `Snapshots/`（整文件 SHA256、分块 SHA256、不可变对象、latest 指针）。服务器只接受本地管理员导入快照，暂未开放任意玩家上传。
 
-MIT。欢迎 issue / PR。
+兼容指纹导出在游戏配置目录 `TurboTick/compatibility-manifest.json`。目前采用保守策略：代码、Def/Patch、mod 元信息与顺序、其他 mod 配置均检查；纯贴图/声音/语言资源不参与。该规则有意偏严格；允许更多 mod 的确定性兼容仍需实际验证，不宣称“兼容一切”。
+
+详细范围与验收：[COMPAT.md](docs/COMPAT.md) · 后续共享殖民地实现：[ROADMAP.md](docs/ROADMAP.md)。
+
+MIT。参考项目的原始代码和二进制均未打包到本项目。

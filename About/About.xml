@@ -1,21 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ModMetaData>
-  <packageId>yg.mpturbo</packageId>
-  <name>MP Turbo</name>
+  <packageId>yg.turbotick</packageId>
+  <name>TurboTick · 独立联机开发版</name>
   <author>YG</author>
   <url>https://github.com/LumiDust/MPTurbo</url>
-  <modVersion>0.1.0</modVersion>
-  <supportedVersions>
-    <li>1.7</li>
-  </supportedVersions>
-  <description>为 Multiplayer（联机）提供「时间倍率 + 全员同步 + 等待诊断」。**只支持 1.7（Waylith / .NET 10）。**
+  <modVersion>0.3.0</modVersion>
+  <supportedVersions><li>1.7</li></supportedVersions>
+  <description>RimWorld 1.7 独立联机项目的协议原型：自有专用服务器与客户端，不依赖 Multiplayer 或 RimWorld Together。两个项目仅作为研究参考。
 
-· 倍率：在游戏内把速度再乘 1–20 倍（叠加在原版 1x/3x/6x/15x 之上）。**默认关闭，需要你手动打开。**
-· 同步：任意玩家改倍率，全服同步（可设为仅房主可改）。
-· 等待：HUD 显示落后 tick、谁在拖后腿；落后过多时自动把倍率同步降回 1x 追赶。
-· 兼容：零编译期依赖 Multiplayer（全部反射），只补两个倍率方法，不碰 tick 主循环与存档结构；未装 Multiplayer 时退化为单机倍率。
+本阶段已实现：自有 TCP 连接、游戏版本及模组指纹握手、服务端权威倍率设置、重连设置恢复、内容寻址快照缓存及断点续传。
 
-不装 Multiplayer 也能用（单机倍率）。</description>
+额外倍率默认关闭，玩家显式启用后才生效；房间内启用开关、倍率和上限一起同步。保留原版暂停和威胁强制常速。
+
+开发状态：共享殖民地载入、人物/建造操作复制、确定性 tick 屏障与状态恢复仍在开发。本版暂未提供完整的多人共同操作殖民地功能。
+
+mod 客户端仅依赖 Harmony；专用服务器不依赖游戏本体。</description>
   <modDependencies>
     <li>
       <packageId>brrainz.harmony</packageId>
@@ -25,12 +24,10 @@
   </modDependencies>
   <loadAfter>
     <li>Ludeon.RimWorld</li>
-    <li>Ludeon.RimWorld.Royalty</li>
-    <li>Ludeon.RimWorld.Ideology</li>
-    <li>Ludeon.RimWorld.Biotech</li>
-    <li>Ludeon.RimWorld.Anomaly</li>
-    <li>Ludeon.RimWorld.Odyssey</li>
     <li>brrainz.harmony</li>
-    <li>rwmt.Multiplayer</li>
   </loadAfter>
+  <incompatibleWith>
+    <li>rwmt.Multiplayer</li>
+    <li>nova.rimworldtogether</li>
+  </incompatibleWith>
 </ModMetaData>

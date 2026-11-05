@@ -1,9 +1,17 @@
-# build
-Source/bin/
-Source/obj/
+# Build intermediates (all projects)
+**/bin/
+**/obj/
+*.pdb
 *.user
 *.suo
 .vs/
+
+# Runtime state and packaged outputs
+Saved/
+**/Saved/
+artifacts/
+*.part
+*.part.json
 
 # OS
 Thumbs.db
