@@ -50,6 +50,7 @@ public sealed class DedicatedServer : IAsyncDisposable
     private int _seed;
     private const int MaxHistory = 200_000;
     private int _commandsSincePersist;
+    private readonly object _commandGate = new();
 
     public SessionInfo? Session
     {
@@ -471,16 +472,27 @@ public sealed class DedicatedServer : IAsyncDisposable
         { peer.TryQueue(WireMessage.Error("UnknownCommand", "This command kind is not part of the shared action set.")); return Task.CompletedTask; }
         if (!peer.TryConsumeCommandBudget())
         { peer.TryQueue(WireMessage.Error("RateLimited", "Too many commands; the server is throttling this client.")); return Task.CompletedTask; }
-        var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2, command.Kind, command.Payload);
-        lock (_history)
+        // Sequence assignment, history and broadcast must be one critical section: otherwise two peers can
+        // interleave and a peer receives a lower sequence after a higher one, which it must reject as a
+        // regression. That would silently drop a player's command.
+        var batch = new List<GameCommand>(1);
+        lock (_commandGate)
         {
-            if (_history.Count >= MaxHistory)
+            var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2,
+                command.Kind, command.Payload);
+            lock (_history)
             {
-                // Keeping the contract honest: once history is dropped, mid-session joins cannot replay it.
-                _history.Clear();
-                _historyTruncated = true;
+                if (_history.Count >= MaxHistory)
+                {
+                    // Keeping the contract honest: once history is dropped, mid-session joins cannot replay it.
+                    _history.Clear();
+                    _historyTruncated = true;
+                }
+                _history.Add(assigned);
             }
-            _history.Add(assigned);
+            batch.Add(assigned);
+            foreach (var recipient in _peers.Values)
+                if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch });
         }
         if (++_commandsSincePersist >= 200)
         {
@@ -488,9 +500,6 @@ public sealed class DedicatedServer : IAsyncDisposable
             _ = PersistSessionAsync(peer.Token).ContinueWith(task => { _ = task.Exception; },
                 CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
         }
-        var batch = new List<GameCommand> { assigned };
-        foreach (var recipient in _peers.Values)
-            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch });
         return Task.CompletedTask;
     }
 

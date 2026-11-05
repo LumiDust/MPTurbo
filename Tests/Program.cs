@@ -17,9 +17,9 @@ async Task Test(string name, Func<Task> body)
     catch (Exception ex) { failed++; Console.WriteLine("FAIL " + name + ": " + ex); }
 }
 void Check(bool value, string message) { if (!value) throw new Exception(message); }
-async Task Until(Func<bool> condition)
+async Task Until(Func<bool> condition, int seconds = 5)
 {
-    using var c = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var c = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
     while (!condition()) await Task.Delay(15, c.Token);
 }
 async Task Throws(Func<Task> body, string? code = null)
@@ -649,6 +649,51 @@ await Test("a dropped peer reconnects to the checkpoint, replays the delta and c
     await guest.SendCommandAsync("designation", "Mine|0|5|5"u8.ToArray());
     await Until(() => server.HistoryCount == 2);
     Check(server.HistoryCount == 2, "reconnected peer can act again");
+});
+
+await Test("five peers submitting concurrently yield one total order with no loss, and history stays bounded", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("stress")));
+    await server.StartAsync();
+    var clients = new List<DedicatedClient>();
+    try
+    {
+        for (var i = 0; i < 5; i++)
+        {
+            var client = new DedicatedClient();
+            clients.Add(client);
+            await client.ConnectAsync("127.0.0.1", server.Port, Hello("p" + i));
+        }
+        var world = new byte[8192]; new Random(71).NextBytes(world);
+        await clients[0].UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+        var received = new List<GameCommand>();
+        clients[1].CommandsReceived += commands => { lock (received) received.AddRange(commands); };
+        await clients[0].StartGameAsync();
+        await Task.WhenAll(clients.Select((client, index) => Task.Run(async () =>
+        {
+            for (var i = 0; i < 100; i++)
+                await client.SendCommandAsync("designation", System.Text.Encoding.UTF8.GetBytes($"Mine|0|{index}|{i}"));
+        })));
+        await Until(() => server.HistoryCount == 500, 20);
+        Check(server.HistoryCount == 500, "all 500 commands stored");
+        // Broadcasts trail the server-side commit; wait for delivery before judging the order.
+        await Until(() => { lock (received) return received.Count == 500; }, 20);
+        List<GameCommand> ordered;
+        lock (received) ordered = [.. received];
+        Check(ordered.Count == 500, "every command delivered");
+        Check(ordered.Select(c => c.Sequence).Distinct().Count() == 500, "no duplicate sequence");
+        Check(ordered.Select(c => c.Sequence).SequenceEqual(ordered.Select(c => c.Sequence).Order()), "single total order");
+        Check(ordered.All(c => c.Tick >= 0), "every command has a tick");
+        // Commands are scheduled a couple of ticks ahead; let them fall into the past before checking.
+        await Task.Delay(250);
+        await clients[0].CheckpointWorldAsync(
+            TurboTick.Networking.SnapshotBuilder.Describe(new byte[4096]), new MemoryStream(new byte[4096]), server.Tick);
+        Check(server.HistoryCount == 0, "checkpoint bounds history");
+    }
+    finally
+    {
+        foreach (var client in clients) await client.DisposeAsync();
+    }
 });
 
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
