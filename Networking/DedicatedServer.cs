@@ -499,8 +499,11 @@ public sealed class DedicatedServer : IAsyncDisposable
                 _history.Add(assigned);
             }
             batch.Add(assigned);
+            // The origin already executed the action locally when the player issued it; echoing it back
+            // would apply it twice (a duplicate blueprint, a double designator).
             foreach (var recipient in _peers.Values)
-                if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch, Epoch = Epoch });
+                if (recipient.Joined && recipient.Id != peer.Id)
+                    recipient.Queue(new WireMessage { Type = "Commands", Commands = batch, Epoch = Epoch });
         }
         if (++_commandsSincePersist >= 200)
         {

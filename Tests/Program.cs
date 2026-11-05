@@ -343,9 +343,12 @@ await Test("shared colony: controller publishes world, starts, and both clients 
     Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "guest receives start");
     var received = new TaskCompletionSource<List<GameCommand>>();
     guest.CommandsReceived += commands => received.TrySetResult(commands.ToList());
+    var hostEchoed = false;
+    controller.CommandsReceived += _ => hostEchoed = true;
     await controller.SendCommandAsync("designation", "Mine|0|10|20"u8.ToArray());
     var batch = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
     Check(batch.Count == 1 && batch[0].Sequence == 1 && batch[0].Kind == "designation", "command relayed in order");
+    Check(!hostEchoed, "the origin does not receive its own command back");
     Check(batch[0].Tick >= 0 && batch[0].Payload.Length > 0, "server assigned tick and kept payload");
     Check(server.Tick >= 0 && server.GameRunning, "server drives a shared tick clock");
 });
@@ -677,11 +680,12 @@ await Test("five peers submitting concurrently yield one total order with no los
         await Until(() => server.HistoryCount == 500, 20);
         Check(server.HistoryCount == 500, "all 500 commands stored");
         // Broadcasts trail the server-side commit; wait for delivery before judging the order.
-        await Until(() => { lock (received) return received.Count == 500; }, 20);
+        // A peer no longer receives its own commands: it already executed them locally.
+        await Until(() => { lock (received) return received.Count == 400; }, 20);
         List<GameCommand> ordered;
         lock (received) ordered = [.. received];
-        Check(ordered.Count == 500, "every command delivered");
-        Check(ordered.Select(c => c.Sequence).Distinct().Count() == 500, "no duplicate sequence");
+        Check(ordered.Count == 400, "every command from other peers delivered once");
+        Check(ordered.Select(c => c.Sequence).Distinct().Count() == 400, "no duplicate sequence");
         Check(ordered.Select(c => c.Sequence).SequenceEqual(ordered.Select(c => c.Sequence).Order()), "single total order");
         Check(ordered.All(c => c.Tick >= 0), "every command has a tick");
         // Commands are scheduled a couple of ticks ahead; let them fall into the past before checking.
