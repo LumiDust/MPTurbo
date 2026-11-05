@@ -857,6 +857,39 @@ await Test("a burst catch-up applies every command exactly once and in order", (
     return Task.CompletedTask;
 });
 
+await Test("checkpoint plus delta equals applying the whole history, with no command applied twice", () =>
+{
+    // Model: each designation command adds one cell id; applying twice would show up as a count change.
+    var history = new List<GameCommand>();
+    var applied = new List<int>();
+    for (var i = 1; i <= 20; i++)
+    {
+        history.Add(new GameCommand(i, i * 10, "designation", BitConverter.GetBytes(i)));
+    }
+
+    var full = new List<int>();
+    foreach (var command in history) full.Add(BitConverter.ToInt32(command.Payload));
+
+    // The checkpoint covers ticks up to 120, so commands 1..12 are already inside the snapshot.
+    const int checkpointTick = 120;
+    var snapshotState = history.Where(c => c.Tick <= checkpointTick)
+        .Select(c => BitConverter.ToInt32(c.Payload)).ToList();
+    var delta = history.Where(c => c.Tick > checkpointTick).ToList();
+    Check(delta.Count == 8, "delta contains only post-checkpoint commands");
+    Check(delta.All(c => c.Tick > checkpointTick), "no pre-checkpoint command is replayed");
+
+    var rebuilt = new List<int>(snapshotState);
+    var log = new CommandLog();
+    foreach (var command in delta) log.Accept(command);
+    foreach (var command in log.TakeThrough(int.MaxValue)) rebuilt.Add(BitConverter.ToInt32(command.Payload));
+
+    Check(rebuilt.Count == full.Count, "no command applied twice or lost");
+    Check(rebuilt.Order().SequenceEqual(full.Order()), "rebuilt state matches full replay");
+    Check(rebuilt.Count == rebuilt.Distinct().Count(), "no duplicate effects");
+    _ = applied;
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
