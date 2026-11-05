@@ -85,6 +85,18 @@ public static void SetMultiplier(float value) { ... }           // 注册后：�
 4. **不能防止有人绕过 UI 直接发命令。** 「仅房主可改」是客户端约束，不是服务器强制（MP 没有暴露权限 API）。
 5. **与 RimWorld Together 不兼容。** Together 不走 MP 的同步通道，装了也没意义。
 
+### 5.1 与工坊上已有 mod 的关系
+
+2026-11-05 的工坊调研（218 个 ID 全量核验，见工作区 `docs/workshop-survey.md`）发现一个功能重叠项：
+
+| ID | 名称 | 最后更新 | 与本 mod 的差异 |
+|---|---|---|---|
+| `2902186466` | Multiplayer - Custom Tickrates | 2024-09-04 | 同为"联机改 tick 速率"。本 mod 额外提供：倍率**全员同步**（任意人可改，可设仅房主）、**落后诊断 HUD**、**落后自动降速**、**零编译期依赖 MP** |
+
+另外相关但不同层：`3797749592`（Desync Fix）、`3830002705`（Desync Probe）做的是哈希级 desync 诊断，本 mod 只显示 `ticksBehind`/`latency`/落后 tick，不重叠；`3812768044`（Host Settings Sync）同步的是房主设置，本 mod 同步的是倍率这一个值。
+
+> 若 `2902186466` 已经做了同步，本 mod 的定位应收缩为"诊断 + 自动降速 + 兼容守护"。核对该 mod 的实现是下一步（见 `docs/COMPAT.md`）。
+
 ---
 
 ## 6. 编译

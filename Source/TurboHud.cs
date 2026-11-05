@@ -69,7 +69,7 @@ namespace MpTurbo
             float bw = 54f;
             bool can = MpSync.CanEdit;
 
-            if (Widgets.ButtonText(new Rect(inner.x, by, bw, 22f), "−", true, true, can))
+            if (Widgets.ButtonText(new Rect(inner.x, by, bw, 22f), "-", true, true, can))
                 MpSync.Step(-1f);
             if (Widgets.ButtonText(new Rect(inner.x + bw + 4f, by, bw, 22f), "+", true, true, can))
                 MpSync.Step(1f);
