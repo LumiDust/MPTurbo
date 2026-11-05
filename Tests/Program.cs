@@ -824,6 +824,35 @@ await Test("catch-up budget closes the gap instead of matching the server's pace
     return Task.CompletedTask;
 });
 
+await Test("a burst catch-up applies every command exactly once and in order", () =>
+{
+    var barrier = new TickBarrier();
+    var log = new CommandLog();
+    var applied = new List<long>();
+    // Server is 200 ticks ahead; commands are spread across that gap, some arriving late.
+    barrier.Publish(200);
+    log.Accept(new GameCommand(1, 10, "designation", [1]));
+    log.Accept(new GameCommand(2, 60, "designation", [2]));
+    log.Accept(new GameCommand(3, 61, "designation", [3]));
+    log.Accept(new GameCommand(4, 199, "designation", [4]));
+    log.Accept(new GameCommand(5, 200, "designation", [5]));
+    log.Accept(new GameCommand(6, 40, "designation", [6]));  // late arrival with a lower tick
+    var frames = 0;
+    while (barrier.CanAdvance && frames < 1000)
+    {
+        var steps = TurboTick.Simulation.CatchUpPlan.Steps(barrier.Backlog);
+        for (var i = 0; i < steps && barrier.TryAdvance(); i++)
+            foreach (var command in log.TakeThrough(barrier.AppliedTick))
+                applied.Add(command.Sequence);
+        frames++;
+    }
+    Check(barrier.AppliedTick == 200, "gap closed exactly");
+    Check(applied.Count == 6 && applied.Distinct().Count() == 6, "each command applied once");
+    Check(applied.SequenceEqual(new long[] { 1, 6, 2, 3, 4, 5 }), "tick order preserved through the burst");
+    Check(frames < 30, $"closed in {frames} frames");
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

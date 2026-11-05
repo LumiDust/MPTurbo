@@ -90,6 +90,7 @@ public static class SharedColony
         var steps = CatchUpPlan.Steps(Session.Barrier.Backlog);
         if (steps == 0) return;
         catchingUp = true;
+        var started = Clock.Now;
         try
         {
             var tickManager = Find.TickManager;
@@ -97,6 +98,8 @@ public static class SharedColony
             {
                 if (tickManager == null || Session.Phase != SharedPhase.Playing || !Session.Barrier.CanAdvance) break;
                 tickManager.DoSingleTick();
+                // Late-game ticks are expensive; never spend the whole frame catching up.
+                if (Clock.Now - started > 0.025f) break;
             }
         }
         finally { catchingUp = false; }
