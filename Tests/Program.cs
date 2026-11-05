@@ -37,7 +37,7 @@ async Task Throws(Func<Task> body, string? code = null)
 await Test("single-player defaults, authoritative enable+value+cap, no local fallback", () =>
 {
     var s = new SpeedAuthority();
-    Check(s.Scale(3) == 3, "default multiplier must be off");
+    Check(s.Scale(3) == 6, "rate sync is on by default (2x of the current speed)");
     s.SetLocal(true, 2, 60);
     Check(s.Scale(3) == 6, "local multiplier");
     s.BeginSession();
@@ -87,7 +87,7 @@ await Test("two clients: one changes, everyone receives same authoritative revis
     await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
     await a.ConnectAsync("127.0.0.1", server.Port, Hello());
     await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
-    Check(a.CurrentPolicy?.Enabled == false && b.CurrentPolicy?.Enabled == false, "default off for everyone");
+    Check(a.CurrentPolicy?.Enabled == true && b.CurrentPolicy?.Enabled == true, "rate sync is enabled for every peer by default");
     await a.SetSpeedAsync(true, 3, 90);
     await Until(() => a.CurrentPolicy?.Revision == 1 && b.CurrentPolicy?.Revision == 1);
     Check(a.CurrentPolicy == b.CurrentPolicy && b.CurrentPolicy == server.CurrentPolicy, "policy content identical");
@@ -253,7 +253,7 @@ await Test("a queued edit from server A must never mutate server B after reconne
     }
     finally { gate.Release(); }
     await Throws(() => pending);
-    Check(b.CurrentPolicy.Revision == 0 && !b.CurrentPolicy.Enabled, "stale edit leaked across rooms");
+    Check(b.CurrentPolicy.Revision == 0 && b.CurrentPolicy.Multiplier == 2f, "stale edit leaked across rooms");
     await client.SetSpeedAsync(true, 3, 60);
     Check(b.CurrentPolicy.Multiplier == 3, "new-session edits still work");
 });
@@ -295,6 +295,75 @@ await Test("queued notifications from server A cannot poison server B policy aft
         Check(authority.Current == b.CurrentPolicy, "old revision from room A poisoned room B subscriber state");
     }
     finally { release.Set(); }
+});
+
+await Test("command log applies in server order, rejects duplicates and ignores the future", () =>
+{
+    var log = new CommandLog();
+    byte[] p = [1];
+    Check(log.Accept(new(1, 10, "designation", p)), "accept #1");
+    Check(log.Accept(new(2, 5, "designation", p)), "accept #2 with an earlier tick");
+    Check(!log.Accept(new(2, 11, "designation", p)), "duplicate sequence");
+    Check(log.TakeThrough(4).Count == 0, "nothing before its tick");
+    var due = log.TakeThrough(10);
+    Check(due.Count == 2 && due[0].Sequence == 2 && due[1].Sequence == 1, "ordered by tick, then sequence");
+    Check(log.Accept(new(1, 12, "designation", p)) == false, "regressed sequence rejected");
+    return Task.CompletedTask;
+});
+
+await Test("tick barrier never runs ahead of the server and ignores stale publishers", () =>
+{
+    var barrier = new TickBarrier();
+    barrier.Publish(5); barrier.Publish(3);
+    Check(barrier.ServerTick == 5 && barrier.Backlog == 5, "monotonic server tick");
+    for (var i = 0; i < 5; i++) Check(barrier.TryAdvance(), "advance");
+    Check(!barrier.TryAdvance() && barrier.Backlog == 0, "cannot pass the server");
+    barrier.Publish(7);
+    Check(barrier.Backlog == 2, "new ticks reopen the window");
+    return Task.CompletedTask;
+});
+
+await Test("shared colony: controller publishes world, starts, and both clients receive commands", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("shared")));
+    await server.StartAsync();
+    await using var controller = new DedicatedClient();
+    await using var guest = new DedicatedClient();
+    await controller.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
+    Check(controller.CanEdit && guest.CanEdit, "both peers may edit in the default room");
+    var world = new byte[300_000]; new Random(3).NextBytes(world);
+    var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
+    await controller.UploadWorldAsync(manifest, new MemoryStream(world));
+    Check(server.WorldManifest?.Id == manifest.Id, "server stores the shared world");
+    Check((await guest.GetWorldManifestAsync())?.Id == manifest.Id, "guests see the same world id");
+    var started = new TaskCompletionSource<long>();
+    guest.WorldStarted += (epoch, _, _) => started.TrySetResult(epoch);
+    await controller.StartGameAsync();
+    Check(await started.Task.WaitAsync(TimeSpan.FromSeconds(5)) >= 0, "guest receives start");
+    var received = new TaskCompletionSource<List<GameCommand>>();
+    guest.CommandsReceived += commands => received.TrySetResult(commands.ToList());
+    await controller.SendCommandAsync("designation", "Mine|0|10|20"u8.ToArray());
+    var batch = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(batch.Count == 1 && batch[0].Sequence == 1 && batch[0].Kind == "designation", "command relayed in order");
+    Check(batch[0].Tick >= 0 && batch[0].Payload.Length > 0, "server assigned tick and kept payload");
+    Check(server.Tick >= 0 && server.GameRunning, "server drives a shared tick clock");
+});
+
+await Test("controller-only room rejects world publishing by a guest", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("shared-owner"), EveryoneCanEdit: false));
+    await server.StartAsync();
+    await using var controller = new DedicatedClient();
+    await using var guest = new DedicatedClient();
+    await controller.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
+    Check(controller.CanEdit && !guest.CanEdit, "only the assigned controller may publish");
+    var world = new byte[2048]; new Random(5).NextBytes(world);
+    var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
+    await Throws(() => guest.UploadWorldAsync(manifest, new MemoryStream(world)), "ControllerOnly");
+    await controller.UploadWorldAsync(manifest, new MemoryStream(world));
+    Check(server.WorldManifest?.Id == manifest.Id, "controller publishes the shared world");
 });
 
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>

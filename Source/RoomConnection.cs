@@ -51,6 +51,14 @@ internal static class RoomConnection
             Status = text;
             if (!socket.IsConnected) TurboState.Authority.ConnectionLost();
         });
+        socket.WorldStarted += (epoch, tick, manifest) => Post(id, () =>
+        {
+            Status = "共享殖民地已开始，正在同步存档…";
+            SharedColony.OnWorldStarted(epoch, tick, manifest);
+            DownloadAndLoad(manifest, id);
+        });
+        socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
+        socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
         Track(Task.Run(async () =>
         {
             try
@@ -98,6 +106,72 @@ internal static class RoomConnection
             try { await socket.SetSpeedAsync(enabled, multiplier, maxRate, token).ConfigureAwait(false); }
             catch (Exception error) { Post(id, () => Status = "设置未确认：" + error.Message); }
         }));
+    }
+
+    /// <summary>Controller action: publish the current save as the shared world, then start the session.</summary>
+    public static void StartSharedColony()
+    {
+        if (client?.IsConnected != true) { Status = "先连接服务器"; return; }
+        if (!CanEdit) { Status = "只有服务器控制者可以发布并开始共享殖民地"; return; }
+        var socket = client;
+        var id = generation;
+        var token = lifetime!.Token;
+        Status = "正在保存当前殖民地…";
+        string path;
+        try { path = WorldFiles.SaveCurrentGame(); }
+        catch (Exception error) { Status = "保存失败：" + error.Message; return; }
+        var bytes = File.ReadAllBytes(path);
+        var manifest = WorldFiles.Describe(bytes);
+        Status = "正在上传存档（" + bytes.Length / 1024 + " KiB）…";
+        Track(Task.Run(async () =>
+        {
+            try
+            {
+                using var stream = new MemoryStream(bytes, writable: false);
+                await socket.UploadWorldAsync(manifest, stream, token).ConfigureAwait(false);
+                await socket.StartGameAsync(token).ConfigureAwait(false);
+                Post(id, () => Status = "已发布并开始共享殖民地");
+            }
+            catch (Exception error) { Post(id, () => Status = "启动共享殖民地失败：" + error.Message); }
+        }));
+    }
+
+    private static void DownloadAndLoad(SnapshotManifest manifest, int id)
+    {
+        var socket = client;
+        var token = lifetime!.Token;
+        var path = WorldFiles.DownloadPath(manifest.Id);
+        Track(Task.Run(async () =>
+        {
+            try
+            {
+                await socket!.DownloadSnapshotAsync(manifest, path, null, token).ConfigureAwait(false);
+                Post(id, () =>
+                {
+                    if (id != generation) return;
+                    try
+                    {
+                        GameDataSaveLoader.LoadGame(path);
+                        Status = "共享殖民地已载入";
+                    }
+                    catch (Exception error) { Status = "载入共享存档失败：" + error.Message; }
+                });
+            }
+            catch (Exception error) { Post(id, () => Status = "下载共享存档失败：" + error.Message); }
+        }));
+    }
+
+    public static Task SendCommand(string kind, byte[] payload, long sequence)
+    {
+        if (client?.IsConnected != true || !TurboState.Authority.SessionConnected) return Task.CompletedTask;
+        var socket = client;
+        var token = lifetime!.Token;
+        var id = generation;
+        return Task.Run(async () =>
+        {
+            try { await socket.SendCommandAsync(kind, payload, token).ConfigureAwait(false); }
+            catch (Exception error) { Post(id, () => Status = "命令发送失败：" + error.Message); }
+        });
     }
 
     public static void CacheSnapshot()

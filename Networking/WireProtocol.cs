@@ -27,6 +27,17 @@ internal sealed record WireMessage
     public string? SnapshotId { get; init; }
     public int ChunkIndex { get; init; }
 
+    // Shared-colony session fields (additive; older peers never send or require them).
+    public long Epoch { get; init; } = -1;
+    public int Tick { get; init; }
+    public string? WorldId { get; init; }
+    public string? UploadId { get; init; }
+    public int ChunkCount { get; init; }
+    public byte[]? WorldChunk { get; init; }
+    public string? Sha256 { get; init; }
+    public GameCommand? Command { get; init; }
+    public List<GameCommand>? Commands { get; init; }
+
     internal static WireMessage Error(string code, string message, long requestId = 0, bool fatal = false) =>
         new() { Type = "Error", Code = code, Message = message, RequestId = requestId, Fatal = fatal };
 }

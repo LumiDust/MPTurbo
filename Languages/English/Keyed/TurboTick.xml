@@ -23,4 +23,9 @@
   <TurboTick_LowTps>Below target TPS. Adjust the speed through the user or server.</TurboTick_LowTps>
   <TurboTick_Disable>Disable extra speed</TurboTick_Disable>
   <TurboTick_EnableShort>Enable extra speed</TurboTick_EnableShort>
+  <TurboTick_StartShared>Publish current colony and start sharing</TurboTick_StartShared>
+  <TurboTick_SharedPlaying>Shared colony - tick {0}</TurboTick_SharedPlaying>
+  <TurboTick_SharedLoading>Shared colony: loading save...</TurboTick_SharedLoading>
+  <TurboTick_SharedFault>Shared colony error: {0}</TurboTick_SharedFault>
+  <TurboTick_Enable>Enable extra multiplier (on by default, synced per room)</TurboTick_Enable>
 </LanguageData>

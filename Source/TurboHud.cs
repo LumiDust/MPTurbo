@@ -22,8 +22,12 @@ public static class TurboHud
             Text.Font = GameFont.Tiny;
             Widgets.Label(new Rect(area.x, area.y + 25, area.width, 20),
                 T("TurboTick_HudTps", TurboState.MeasuredTps.ToString("0"), TurboState.TargetTps.ToString("0")));
+            var shared = SharedColony.Session;
             Widgets.Label(new Rect(area.x, area.y + 45, area.width, 40),
                 TurboState.Authority.IsHeld ? T("TurboTick_Held")
+                : shared.Phase == TurboTick.Simulation.SharedPhase.Playing ? T("TurboTick_SharedPlaying", shared.Barrier.ServerTick)
+                : shared.Phase == TurboTick.Simulation.SharedPhase.Synchronizing ? T("TurboTick_SharedLoading")
+                : shared.Phase == TurboTick.Simulation.SharedPhase.Faulted ? T("TurboTick_SharedFault", shared.LastError)
                 : TurboState.Authority.SessionConnected ? T("TurboTick_RoomPrototype")
                 : T("TurboTick_Local"));
             if (TurboState.Behind)

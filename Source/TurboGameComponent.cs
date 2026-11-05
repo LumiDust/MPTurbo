@@ -9,7 +9,7 @@ public class TurboGameComponent : GameComponent
     // concrete components with a Game argument (same contract as built-in components).
     public TurboGameComponent(Game game) { }
 
-    private bool savedEnabled;
+    private bool savedEnabled = true;
     private float savedMultiplier = 2f;
     private float savedCap = 60f;
 
@@ -22,7 +22,7 @@ public class TurboGameComponent : GameComponent
             savedMultiplier = policy.Multiplier;
             savedCap = policy.MaxRate;
         }
-        Scribe_Values.Look(ref savedEnabled, "turboEnabled", false);
+        Scribe_Values.Look(ref savedEnabled, "turboEnabled", true);
         Scribe_Values.Look(ref savedMultiplier, "turboMultiplier", 2f);
         Scribe_Values.Look(ref savedCap, "turboMaxRate", 60f);
     }
@@ -38,6 +38,10 @@ public class TurboGameComponent : GameComponent
         if (!TurboState.Authority.SessionRequested) TurboState.InitializeLocal(TurboTickMod.Settings);
     }
 
-    public override void GameComponentUpdate() => TurboState.Update();
+    public override void GameComponentUpdate()
+    {
+        TurboState.Update();
+        SharedColony.Update();
+    }
     public override void GameComponentOnGUI() => TurboHud.Draw();
 }

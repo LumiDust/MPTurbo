@@ -11,8 +11,9 @@ public static class NetworkProtocol
     public const int SnapshotChunkSize = 256 * 1024;
 }
 
-/// <summary>Server-authoritative simulation rate settings. Revision zero is the initial policy.</summary>
-public sealed record SpeedPolicy(bool Enabled = false, float Multiplier = 2f, float MaxRate = 60f, long Revision = 0)
+/// <summary>Server-authoritative simulation rate settings. Revision zero is the initial policy.
+/// Rate sync is on by default; joining a room applies the server value to everyone.</summary>
+public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, float MaxRate = 60f, long Revision = 0)
 {
     private float _multiplier = ValidateMultiplier(Multiplier);
     private float _maxRate = ValidateMaxRate(MaxRate);
@@ -36,6 +37,28 @@ public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 3057
     string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true);
 public sealed record SnapshotManifest(string Id, long Length, int ChunkSize, IReadOnlyList<string> ChunkHashes);
 public sealed record SnapshotChunk(string Id, int Index, byte[] Data, string Sha256);
+
+/// <summary>One deterministic gameplay command. Sequence and tick are assigned by the server.</summary>
+public sealed record GameCommand(long Sequence, int Tick, string Kind, byte[] Payload);
+
+/// <summary>Builds the same manifest the server would compute, so a client can verify before upload.</summary>
+public static class SnapshotBuilder
+{
+    public static SnapshotManifest Describe(ReadOnlySpan<byte> data)
+    {
+        var hashes = new List<string>();
+        using var whole = System.Security.Cryptography.IncrementalHash.CreateHash(
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        whole.AppendData(data);
+        for (var offset = 0; offset < data.Length; offset += NetworkProtocol.SnapshotChunkSize)
+        {
+            var length = Math.Min(NetworkProtocol.SnapshotChunkSize, data.Length - offset);
+            hashes.Add(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(data.Slice(offset, length))));
+        }
+        return new SnapshotManifest(Convert.ToHexStringLower(whole.GetHashAndReset()), data.Length,
+            NetworkProtocol.SnapshotChunkSize, hashes);
+    }
+}
 
 /// <summary>A structured server or transport error suitable for displaying to a player.</summary>
 public sealed class NetworkException : IOException

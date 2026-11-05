@@ -26,6 +26,20 @@ public sealed class DedicatedServer : IAsyncDisposable
     private int _port;
     private int _disposed;
 
+    // Shared-colony session: the server owns epoch, tick and command sequencing.
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, byte[]>> _worldUploads = new();
+    private SnapshotManifest? _worldManifest;
+    private long _epoch = -1;
+    private int _tick;
+    private long _commandSequence;
+    private int _gameRunning;
+    private Task _tickTask = Task.CompletedTask;
+
+    public SnapshotManifest? WorldManifest => Volatile.Read(ref _worldManifest);
+    public long Epoch => Interlocked.Read(ref _epoch);
+    public int Tick => Volatile.Read(ref _tick);
+    public bool GameRunning => Volatile.Read(ref _gameRunning) != 0;
+
     private sealed record SavedState(SpeedPolicy Policy, string? GameVersion, string? ModHash);
 
     public int Port => Volatile.Read(ref _port);
@@ -73,6 +87,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                 foreach (var peer in _peers.Values) peer.Close();
             });
             _acceptTask = AcceptLoopAsync(_listener, _run.Token);
+            _tickTask = GameLoopAsync(_run.Token);
         }
         catch
         {
@@ -96,6 +111,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             _listener?.Stop();
             foreach (var peer in _peers.Values) peer.Close();
             await _acceptTask.ConfigureAwait(false);
+            await _tickTask.ConfigureAwait(false);
             await Task.WhenAll(_handlers.Values.ToArray()).ConfigureAwait(false);
             _shutdownRegistration.Dispose();
             _run.Dispose();
@@ -258,8 +274,118 @@ public sealed class DedicatedServer : IAsyncDisposable
                 catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException or System.Text.Json.JsonException)
                 { peer.Queue(WireMessage.Error("InvalidSnapshotChunk", "The requested snapshot id or chunk is missing, out of bounds, or corrupt.", message.RequestId)); }
                 return;
-            default: throw new NetworkException("UnknownMessage", "This message is not supported. Players may download snapshots but may not upload them.");
+            case "GetWorldManifest":
+                RequireRequestId(message);
+                peer.Queue(new WireMessage { Type = "WorldManifest", RequestId = message.RequestId, Manifest = WorldManifest });
+                return;
+            case "PublishWorldChunk":
+                RequireRequestId(message);
+                await PublishWorldChunkAsync(peer, message).ConfigureAwait(false);
+                return;
+            case "CommitWorld":
+                RequireRequestId(message);
+                await CommitWorldAsync(peer, message).ConfigureAwait(false);
+                return;
+            case "StartGame":
+                RequireRequestId(message);
+                await StartGameAsync(peer, message).ConfigureAwait(false);
+                return;
+            case "Command":
+                await RelayCommandAsync(peer, message).ConfigureAwait(false);
+                return;
+            default: throw new NetworkException("UnknownMessage", "This message is not supported.");
         }
+    }
+
+    private async Task PublishWorldChunkAsync(Peer peer, WireMessage message)
+    {
+        if (!peer.CanEdit) { peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may publish the world.", message.RequestId)); return; }
+        var uploadId = message.UploadId;
+        if (string.IsNullOrWhiteSpace(uploadId) || uploadId.Length > 64 || uploadId.Any(char.IsControl))
+        { peer.Queue(WireMessage.Error("InvalidUpload", "A printable upload id is required.", message.RequestId)); return; }
+        var data = message.WorldChunk;
+        if (message.ChunkIndex < 0 || data is null || data.Length is < 1 or > NetworkProtocol.SnapshotChunkSize)
+        { peer.Queue(WireMessage.Error("InvalidUpload", "The world chunk index or size is invalid.", message.RequestId)); return; }
+        _worldUploads.GetOrAdd(uploadId, _ => new ConcurrentDictionary<int, byte[]>())[message.ChunkIndex] = data;
+        peer.Queue(new WireMessage { Type = "WorldChunkAccepted", RequestId = message.RequestId, ChunkIndex = message.ChunkIndex });
+    }
+
+    private async Task CommitWorldAsync(Peer peer, WireMessage message)
+    {
+        if (!peer.CanEdit) { peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may publish the world.", message.RequestId)); return; }
+        if (string.IsNullOrWhiteSpace(message.UploadId) || !_worldUploads.TryRemove(message.UploadId, out var chunks) || chunks.Count == 0)
+        { peer.Queue(WireMessage.Error("WorldMissing", "There is no matching world upload.", message.RequestId)); return; }
+        try
+        {
+            using var buffer = new MemoryStream();
+            for (var index = 0; index < chunks.Count; index++)
+            {
+                if (!chunks.TryGetValue(index, out var chunk))
+                { peer.Queue(WireMessage.Error("InvalidUpload", "The world upload has a gap.", message.RequestId)); return; }
+                buffer.Write(chunk);
+            }
+            buffer.Position = 0;
+            var manifest = await Snapshots.PutAsync(buffer, peer.Token).ConfigureAwait(false);
+            if (message.Sha256 is { Length: > 0 } expected && !string.Equals(expected, manifest.Id, StringComparison.Ordinal))
+            { peer.Queue(WireMessage.Error("WorldHashMismatch", "The server computed a different world hash.", message.RequestId)); return; }
+            Volatile.Write(ref _worldManifest, manifest);
+            foreach (var recipient in _peers.Values)
+                if (recipient.Joined) recipient.Queue(new WireMessage { Type = "World", Manifest = manifest });
+            peer.Queue(new WireMessage { Type = "WorldCommitted", RequestId = message.RequestId, Manifest = manifest });
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
+        { peer.Queue(WireMessage.Error("WorldStoreFailed", "The world snapshot could not be stored.", message.RequestId)); }
+    }
+
+    private async Task StartGameAsync(Peer peer, WireMessage message)
+    {
+        if (!peer.CanEdit) { peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may start the shared colony.", message.RequestId)); return; }
+        var world = WorldManifest;
+        if (world is null) { peer.Queue(WireMessage.Error("WorldMissing", "Publish the world snapshot before starting.", message.RequestId)); return; }
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+        try
+        {
+            var epoch = Interlocked.Increment(ref _epoch);
+            Interlocked.Exchange(ref _tick, 0);
+            Interlocked.Exchange(ref _commandSequence, 0);
+            Volatile.Write(ref _gameRunning, 1);
+            foreach (var recipient in _peers.Values)
+                if (recipient.Joined)
+                    recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world });
+            peer.Queue(new WireMessage { Type = "StartedAccepted", RequestId = message.RequestId, Epoch = epoch });
+        }
+        finally { _stateGate.Release(); }
+    }
+
+    private Task RelayCommandAsync(Peer peer, WireMessage message)
+    {
+        if (!GameRunning || !peer.Joined) { peer.Queue(WireMessage.Error("NotPlaying", "The shared colony is not running.")); return Task.CompletedTask; }
+        var command = message.Command;
+        if (command is null || string.IsNullOrWhiteSpace(command.Kind) || command.Kind.Length > 64 || command.Kind.Any(char.IsControl)
+            || command.Payload is null || command.Payload.Length > 64 * 1024)
+        { peer.Queue(WireMessage.Error("InvalidCommand", "The command kind or payload is invalid.")); return Task.CompletedTask; }
+        var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2, command.Kind, command.Payload);
+        var batch = new List<GameCommand> { assigned };
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Commands", Commands = batch });
+        return Task.CompletedTask;
+    }
+
+    private async Task GameLoopAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
+            while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                if (!GameRunning) continue;
+                var tick = Interlocked.Increment(ref _tick);
+                if (tick % 6 != 0) continue;
+                foreach (var peer in _peers.Values)
+                    if (peer.Joined) peer.Queue(new WireMessage { Type = "Tick", Tick = tick });
+            }
+        }
+        catch (Exception) { /* shutdown */ }
     }
 
     private async Task SetSpeedAsync(Peer peer, WireMessage message)

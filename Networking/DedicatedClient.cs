@@ -28,6 +28,9 @@ public sealed class DedicatedClient : IAsyncDisposable
 
     public event Action<SpeedPolicy>? PolicyChanged;
     public event Action<string>? StatusChanged;
+    public event Action<long, int, SnapshotManifest>? WorldStarted;
+    public event Action<int>? Ticked;
+    public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
@@ -245,6 +248,65 @@ public sealed class DedicatedClient : IAsyncDisposable
         File.Delete(metadata);
     }
 
+    /// <summary>Latest world snapshot the server holds for the shared colony, if any.</summary>
+    public async Task<SnapshotManifest?> GetWorldManifestAsync(CancellationToken ct = default)
+    {
+        var reply = await RequestAsync(new WireMessage { Type = "GetWorldManifest" }, ct).ConfigureAwait(false);
+        if (reply.Type != "WorldManifest")
+            throw new NetworkException("InvalidResponse", "The server did not return a world manifest.");
+        if (reply.Manifest is not null) Validation.Manifest(reply.Manifest);
+        return reply.Manifest;
+    }
+
+    /// <summary>Controller-only: upload the authoritative world snapshot in verified chunks.</summary>
+    public async Task UploadWorldAsync(SnapshotManifest manifest, Stream source, CancellationToken ct = default)
+    {
+        Validation.Manifest(manifest);
+        ArgumentNullException.ThrowIfNull(source);
+        var session = ConnectedSession();
+        var uploadId = Guid.NewGuid().ToString("N");
+        for (var index = 0; index < manifest.ChunkHashes.Count; index++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var length = Validation.ChunkLength(manifest, index);
+            var chunk = GC.AllocateUninitializedArray<byte>(length);
+            await source.ReadExactlyAsync(chunk, ct).ConfigureAwait(false);
+            if (!string.Equals(Convert.ToHexStringLower(SHA256.HashData(chunk)), manifest.ChunkHashes[index], StringComparison.Ordinal))
+                throw new NetworkException("WorldHashMismatch", "A world chunk does not match its manifest hash.");
+            await RequestAsync(new WireMessage
+            {
+                Type = "PublishWorldChunk", UploadId = uploadId, ChunkIndex = index, WorldChunk = chunk
+            }, ct, session).ConfigureAwait(false);
+        }
+        var reply = await RequestAsync(new WireMessage
+        {
+            Type = "CommitWorld", UploadId = uploadId, ChunkCount = manifest.ChunkHashes.Count, Sha256 = manifest.Id
+        }, ct, session).ConfigureAwait(false);
+        if (reply.Type != "WorldCommitted" || reply.Manifest?.Id != manifest.Id)
+            throw new NetworkException("WorldUploadRejected", "The server did not accept the world snapshot.");
+    }
+
+    /// <summary>Controller-only: start (or restart) the shared simulation for everyone in the room.</summary>
+    public async Task StartGameAsync(CancellationToken ct = default)
+    {
+        var reply = await RequestAsync(new WireMessage { Type = "StartGame" }, ct).ConfigureAwait(false);
+        if (reply.Type != "StartedAccepted")
+            throw new NetworkException("StartRejected", "The server did not start the shared colony.");
+    }
+
+    /// <summary>Queue a gameplay command; the server assigns its order and tick and echoes it to everyone.</summary>
+    public async Task SendCommandAsync(string kind, byte[] payload, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(kind);
+        ArgumentNullException.ThrowIfNull(payload);
+        var session = ConnectedSession();
+        await session.Connection.WriteAsync(new WireMessage
+        {
+            Type = "Command", Command = new GameCommand(0, 0, kind, payload)
+        }, session.Token).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+    }
+
     public async Task DisconnectAsync()
     {
         CancelConnectionAttempt();
@@ -374,7 +436,29 @@ public sealed class DedicatedClient : IAsyncDisposable
                         break;
                     case "SnapshotManifest":
                     case "SnapshotChunk":
+                    case "WorldManifest":
+                    case "WorldChunkAccepted":
+                    case "WorldCommitted":
+                    case "StartedAccepted":
                         CompleteResponse(session, message);
+                        break;
+                    case "World":
+                        if (message.Manifest is not null) Validation.Manifest(message.Manifest);
+                        break;
+                    case "Started":
+                        if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
+                        Validation.Manifest(message.Manifest);
+                        var started = message;
+                        Publish(session, () => WorldStarted?.Invoke(started.Epoch, started.Tick, started.Manifest!));
+                        break;
+                    case "Tick":
+                        var tick = message.Tick;
+                        Publish(session, () => Ticked?.Invoke(tick));
+                        break;
+                    case "Commands":
+                        if (message.Commands is null) throw new NetworkException("InvalidCommand", "The server sent an empty command batch.");
+                        var commands = message.Commands.ToArray();
+                        Publish(session, () => CommandsReceived?.Invoke(commands));
                         break;
                     case "Error":
                         var error = ServerError(message);
@@ -421,6 +505,17 @@ public sealed class DedicatedClient : IAsyncDisposable
             Volatile.Write(ref _canEdit, 0);
             SetStatus(reason, session.Generation);
         }
+    }
+
+    /// <summary>Orders observer callbacks and drops anything belonging to a superseded connection.</summary>
+    private void Publish(Session session, Action action)
+    {
+        _notifications.Writer.TryWrite(() =>
+        {
+            if (session.Generation != Volatile.Read(ref _notificationGeneration) || session.IsClosed ||
+                !ReferenceEquals(Volatile.Read(ref _session), session)) return;
+            try { action(); } catch (Exception) { }
+        });
     }
 
     private void PublishPolicy(SpeedPolicy policy, Session session)

@@ -7,7 +7,7 @@ public class TurboTickSettings : ModSettings
 {
     // Connection/presentation preferences are local. Enabled/multiplier/cap are local defaults only;
     // once a room is requested every simulation setting must be confirmed by its server.
-    public bool enabled;
+    public bool enabled = true;
     public float multiplier = 2f;
     public float maxRateCap = 60f;
     public bool showHud = true;
@@ -22,7 +22,7 @@ public class TurboTickSettings : ModSettings
 
     public override void ExposeData()
     {
-        Scribe_Values.Look(ref enabled, "enabled", false);
+        Scribe_Values.Look(ref enabled, "enabled", true);
         Scribe_Values.Look(ref multiplier, "multiplier", 2f);
         Scribe_Values.Look(ref maxRateCap, "maxRateCap", 60f);
         Scribe_Values.Look(ref showHud, "showHud", true);
@@ -68,6 +68,10 @@ public class TurboTickSettings : ModSettings
                 room ? T("TurboTick_ApplyRoom") : T("TurboTick_ApplyLocal"), true, true, RoomConnection.CanEdit))
             TurboState.Request(draftEnabled, draftMultiplier, draftCap);
         listing.CheckboxLabeled(T("TurboTick_ShowHud"), ref showHud, T("TurboTick_ShowHudDesc"));
+        listing.Gap(6f);
+        var shared = listing.GetRect(30f);
+        if (Widgets.ButtonText(new Rect(shared.x, shared.y, 320f, 28f), T("TurboTick_StartShared"), true, true, TurboState.Authority.SessionConnected && RoomConnection.CanEdit))
+            RoomConnection.StartSharedColony();
         listing.Gap(6f);
         var cache = listing.GetRect(30f);
         if (Widgets.ButtonText(new Rect(cache.x, cache.y, 320f, 28f), T("TurboTick_CacheSnapshot"), true, true, TurboState.Authority.SessionConnected))

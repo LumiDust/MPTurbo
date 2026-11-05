@@ -23,4 +23,9 @@
   <TurboTick_LowTps>实际 TPS 低于目标；由用户或服务端统一调整倍率。</TurboTick_LowTps>
   <TurboTick_Disable>关闭额外倍率</TurboTick_Disable>
   <TurboTick_EnableShort>启用额外倍率</TurboTick_EnableShort>
+  <TurboTick_StartShared>发布当前殖民地并开始共享</TurboTick_StartShared>
+  <TurboTick_SharedPlaying>共享殖民地 · tick {0}</TurboTick_SharedPlaying>
+  <TurboTick_SharedLoading>共享殖民地：载入存档中…</TurboTick_SharedLoading>
+  <TurboTick_SharedFault>共享殖民地异常：{0}</TurboTick_SharedFault>
+  <TurboTick_Enable>启用额外倍率（默认开启，随房间同步）</TurboTick_Enable>
 </LanguageData>
