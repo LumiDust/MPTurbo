@@ -19,15 +19,14 @@ public static class Diagnostics
         var session = SharedColony.Session;
         var text = new StringBuilder();
         text.AppendLine("版本 " + (typeof(Diagnostics).Assembly.GetName().Version?.ToString(3) ?? "?"));
-        text.AppendLine("补丁 " + string.Join(" ", new[]
+        var names = new Dictionary<string, string>
         {
-            Patched(typeof(DesignationManager), nameof(DesignationManager.AddDesignation), "标记"),
-            Patched(typeof(GenConstruct), nameof(GenConstruct.PlaceBlueprintForBuild), "建造"),
-            Patched(typeof(Pawn_DraftController), "set_Drafted", "征召"),
-            Patched(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob), "指令"),
-            Patched(typeof(TickManager), nameof(TickManager.TickManagerUpdate), "锁步"),
-            Patched(typeof(TickManager), nameof(TickManager.DoSingleTick), "应用")
-        }));
+            ["designation"] = "标记", ["blueprint"] = "建造", ["draft"] = "征召",
+            ["order"] = "指令", ["gate"] = "锁步", ["apply"] = "应用"
+        };
+        text.AppendLine("补丁 " + string.Join(" ", PatchInstaller.Status
+            .Select(pair => (names.TryGetValue(pair.Key, out var label) ? label : pair.Key) + (pair.Value ? "✓" : "✗")))
+            + (PatchInstaller.AllCritical ? "" : "（不完整，共享殖民地已禁用）"));
         text.AppendLine("房间 " + RoomConnection.Status);
         text.AppendLine("模式 " + (TurboState.Authority.SessionRequested
             ? (TurboState.Authority.SessionConnected ? "联机" : "联机（等待中）")

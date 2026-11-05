@@ -127,6 +127,11 @@ internal static class RoomConnection
     public static void StartSharedColony()
     {
         if (client?.IsConnected != true) { Status = "先连接服务器"; return; }
+        if (!PatchInstaller.AllCritical)
+        {
+            Status = "本机补丁不完整，无法开启共享殖民地（见诊断信息）";
+            return;
+        }
         if (!CanEdit) { Status = "只有服务器控制者可以发布并开始共享殖民地"; return; }
         var socket = client;
         var id = generation;
