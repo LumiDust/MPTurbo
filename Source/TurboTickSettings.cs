@@ -15,6 +15,8 @@ public class TurboTickSettings : ModSettings
     public bool autoRecover = true;
     /// <summary>Transport loading sync - unverified in game, therefore off by default.</summary>
     public bool experimentalInteractions = false;
+    /// <summary>Trading is normally limited to the host; enabling this leaves it ungated and unsynced.</summary>
+    public bool everyoneMayTrade = false;
     public string ServerHost = "127.0.0.1";
     public string ServerPort = "30572";
     public string PlayerName = "Player";
@@ -32,6 +34,7 @@ public class TurboTickSettings : ModSettings
         Scribe_Values.Look(ref showHud, "showHud", true);
         Scribe_Values.Look(ref autoRecover, "autoRecover", true);
         Scribe_Values.Look(ref experimentalInteractions, "experimentalInteractions", false);
+        Scribe_Values.Look(ref everyoneMayTrade, "everyoneMayTrade", false);
         Scribe_Values.Look(ref ServerHost, "serverHost", "127.0.0.1");
         Scribe_Values.Look(ref ServerPort, "serverPort", "30572");
         Scribe_Values.Look(ref PlayerName, "playerName", "Player");
@@ -76,6 +79,7 @@ public class TurboTickSettings : ModSettings
         listing.CheckboxLabeled(T("TurboTick_ShowHud"), ref showHud, T("TurboTick_ShowHudDesc"));
         listing.CheckboxLabeled(T("TurboTick_AutoRecover"), ref autoRecover, T("TurboTick_AutoRecoverDesc"));
         listing.CheckboxLabeled(T("TurboTick_Experimental"), ref experimentalInteractions, T("TurboTick_ExperimentalDesc"));
+        listing.CheckboxLabeled(T("TurboTick_EveryoneTrades"), ref everyoneMayTrade, T("TurboTick_EveryoneTradesDesc"));
         listing.Gap(6f);
         var shared = listing.GetRect(30f);
         if (Widgets.ButtonText(new Rect(shared.x, shared.y, 320f, 28f), T("TurboTick_StartShared"), true, true, TurboState.Authority.SessionConnected && RoomConnection.CanEdit))

@@ -33,4 +33,6 @@
   <TurboTick_AutoRecoverDesc>检测到状态分叉时自动重连并从服务器检查点追赶；关闭后只提示，由你手动处理。</TurboTick_AutoRecoverDesc>
   <TurboTick_Experimental>实验性：同步运输舱装载</TurboTick_Experimental>
   <TurboTick_ExperimentalDesc>把装舱操作同步给其他人。尚未在实机验证，默认关闭；出问题请关掉它。</TurboTick_ExperimentalDesc>
+  <TurboTick_EveryoneTrades>允许所有人交易（不同步）</TurboTick_EveryoneTrades>
+  <TurboTick_EveryoneTradesDesc>默认只有房主能成交，避免两端银两与货物不一致。开启后各自交易，可能造成分叉。</TurboTick_EveryoneTradesDesc>
 </LanguageData>

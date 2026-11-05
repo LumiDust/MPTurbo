@@ -913,6 +913,18 @@ await Test("transport command round-trips and the server accepts the kind", asyn
     Check(relayed.Kind == "transport", "transport reaches other peers");
 });
 
+await Test("colony-wide actions are limited to the host unless explicitly loosened", () =>
+{
+    var policy = typeof(TurboTick.Simulation.InteractionPolicy);
+    Check(!TurboTick.Simulation.InteractionPolicy.CanRunColonyWideAction(true, false, false), "guest blocked while sharing");
+    Check(TurboTick.Simulation.InteractionPolicy.CanRunColonyWideAction(true, true, false), "host allowed");
+    Check(TurboTick.Simulation.InteractionPolicy.CanRunColonyWideAction(false, false, false), "single-player unaffected");
+    Check(TurboTick.Simulation.InteractionPolicy.CanRunColonyWideAction(true, false, true), "override allows guests");
+    Check(TurboTick.Simulation.InteractionPolicy.DeniedMessage("交易").Contains("交易"), "message names the action");
+    _ = policy;
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
