@@ -1,0 +1,30 @@
+# TurboTick Server
+
+TurboTick 的独立专用服务器，运行需要 **.NET 10 Runtime**，不需要安装游戏。当前为 0.3.0 开发原型，提供房间握手、倍率设置同步和快照分发；共享殖民地模拟仍在开发。
+
+## 启动
+
+在解压目录执行：
+
+```sh
+dotnet TurboTick.Server.dll --host 127.0.0.1 --port 30572 --data Saved
+```
+
+用 `Ctrl+C` 正常退出。完整参数：
+
+```sh
+dotnet TurboTick.Server.dll --help
+```
+
+- `--controller-only`：仅服务器分配的控制者可编辑倍率。
+- `--game-version 1.7.xxxx`：固定完整游戏 build。
+- `--mod-hash <指纹>`：固定模组配置指纹。
+- `--import <文件>`：导入文件供快照缓存/续传测试，当前不自动载入游戏。
+
+默认 `1.7` 和 `development` 会在首位有效玩家加入时锁定完整版本与指纹，并保存在数据目录。其他玩家需精确匹配。默认仅监听本机；跨机器联调需显式设置监听地址。当前尚无账号认证或 TLS，仅用于可信环境。
+
+## 数据
+
+`Saved/server-state.json` 保存设置修订与兼容性锁，`Saved/Snapshots/` 保存内容寻址快照。修改 modpack 或版本前先备份数据；不要将不同游戏状态混入同一房间。
+
+[项目与客户端安装](https://github.com/LumiDust/TurboTick) · [问题反馈](https://github.com/LumiDust/TurboTick/issues)

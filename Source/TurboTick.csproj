@@ -5,15 +5,11 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>TurboTick</AssemblyName>
     <RootNamespace>TurboTick</RootNamespace>
-    <Version>0.3.0</Version>
-    <AssemblyVersion>0.3.0.0</AssemblyVersion>
-    <FileVersion>0.3.0.0</FileVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <OutputPath>..\1.7\Assemblies\</OutputPath>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
-    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <DebugType>none</DebugType>
     <Deterministic>true</Deterministic>

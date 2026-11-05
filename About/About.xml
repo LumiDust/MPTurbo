@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ModMetaData>
   <packageId>yg.turbotick</packageId>
-  <name>TurboTick · 独立联机开发版</name>
+  <name>TurboTick</name>
   <author>YG</author>
-  <url>https://github.com/LumiDust/MPTurbo</url>
+  <url>https://github.com/LumiDust/TurboTick</url>
   <modVersion>0.3.0</modVersion>
   <supportedVersions><li>1.7</li></supportedVersions>
-  <description>RimWorld 1.7 独立联机项目的协议原型：自有专用服务器与客户端，不依赖 Multiplayer 或 RimWorld Together。两个项目仅作为研究参考。
+  <description>TurboTick — RimWorld 1.7 独立联机项目。
 
-本阶段已实现：自有 TCP 连接、游戏版本及模组指纹握手、服务端权威倍率设置、重连设置恢复、内容寻址快照缓存及断点续传。
+开发原型 0.3.0：房间连接、服务端倍率设置同步、兼容性握手与快照缓存已实现。共享殖民地载入、人物和建造操作同步仍在开发，游戏内双端验收尚未完成。
 
-额外倍率默认关闭，玩家显式启用后才生效；房间内启用开关、倍率和上限一起同步。保留原版暂停和威胁强制常速。
+额外倍率默认关闭，显式开启后由服务器统一确认与广播。保留原版暂停和威胁强制常速。
 
-开发状态：共享殖民地载入、人物/建造操作复制、确定性 tick 屏障与状态恢复仍在开发。本版暂未提供完整的多人共同操作殖民地功能。
+客户端需要 Harmony。专用服务器在 GitHub 单独提供，运行需要 .NET 10 Runtime。
 
-mod 客户端仅依赖 Harmony；专用服务器不依赖游戏本体。</description>
+项目主页与安装说明：https://github.com/LumiDust/TurboTick</description>
   <modDependencies>
     <li>
       <packageId>brrainz.harmony</packageId>

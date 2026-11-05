@@ -17,7 +17,7 @@ public class TurboTickMod : Mod
         LongEventHandler.ExecuteWhenFinished(Bootstrap.Init);
     }
 
-    public override string SettingsCategory() => "TurboTick · 独立联机";
+    public override string SettingsCategory() => "TurboTick";
     public override void DoSettingsWindowContents(Rect inRect)
     {
         RoomConnection.Pump();

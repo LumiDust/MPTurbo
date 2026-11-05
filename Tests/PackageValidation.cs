@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Text.RegularExpressions;
@@ -13,6 +14,24 @@ static class PackageValidation
         var root = directory?.FullName ?? throw new Exception("Repository package root not found.");
         void Require(bool valid, string text) { if (!valid) throw new Exception(text); }
         var about = XDocument.Load(Path.Combine(root, "About", "About.xml")).Root!;
+        Require(about.Element("name")?.Value == "TurboTick", "canonical mod title");
+        Require(about.Element("packageId")?.Value == "yg.turbotick", "stable package identity");
+        Require(about.Element("url")?.Value == "https://github.com/LumiDust/TurboTick", "canonical repository URL");
+        var buildVersion = XDocument.Load(Path.Combine(root, "Directory.Build.props"))
+            .Root!.Element("PropertyGroup")!.Element("Version")!.Value;
+        Require(about.Element("modVersion")?.Value == buildVersion, "single release version agrees with mod metadata");
+        var expectedAssemblyVersion = new Version(buildVersion + ".0");
+        var readme = File.ReadAllText(Path.Combine(root, "README.md"));
+        Require(!readme.Contains("MPTurbo", StringComparison.OrdinalIgnoreCase), "legacy product name remains in README");
+        var publicIntro = readme.Split("## 致谢", 2)[0];
+        Require(!publicIntro.Contains("Multiplayer", StringComparison.Ordinal)
+             && !publicIntro.Contains("RimWorld Together", StringComparison.Ordinal), "reference projects belong in acknowledgments only");
+        var preview = Path.Combine(root, "About", "Preview.png");
+        var image = File.ReadAllBytes(preview);
+        Require(image.Length < 1024 * 1024 && image.Length > 24, "Workshop preview must be below 1 MiB");
+        Require(image.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }), "preview must be a PNG");
+        Require(BinaryPrimitives.ReadInt32BigEndian(image.AsSpan(16, 4)) == 640
+             && BinaryPrimitives.ReadInt32BigEndian(image.AsSpan(20, 4)) == 360, "project preview convention: 640x360");
         var versions = about.Element("supportedVersions")!.Elements("li").Select(x => x.Value).ToArray();
         Require(versions.SequenceEqual(new[] { "1.7" }), "only RimWorld 1.7 may be declared");
         var dependencies = about.Element("modDependencies")!.Elements("li").Select(x => x.Element("packageId")!.Value).ToArray();
@@ -26,6 +45,7 @@ static class PackageValidation
             using var stream = File.OpenRead(file);
             using var pe = new PEReader(stream);
             var metadata = pe.GetMetadataReader();
+            Require(metadata.GetAssemblyDefinition().Version == expectedAssemblyVersion, "bundled assembly version differs from release metadata");
             var refs = metadata.AssemblyReferences.Select(handle => metadata.GetAssemblyReference(handle))
                 .Select(r => (Name: metadata.GetString(r.Name), r.Version)).ToArray();
             Require(!refs.Any(r => r.Name.Contains("Multiplayer", StringComparison.OrdinalIgnoreCase)

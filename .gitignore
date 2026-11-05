@@ -13,6 +13,10 @@ artifacts/
 *.part
 *.part.json
 
+# Local Steam publishing identity (keep locally between uploads)
+**/About/PublishedFileId.txt
+workshop-local/
+
 # OS
 Thumbs.db
 desktop.ini
