@@ -39,6 +39,9 @@ public sealed class DedicatedServer : IAsyncDisposable
     private readonly List<GameCommand> _history = [];
     private readonly ConcurrentDictionary<int, string> _firstHashAtTick = new();
     private readonly ConcurrentDictionary<int, string[]> _firstCategoriesAtTick = new();
+    private readonly ConcurrentDictionary<(long Peer, int Tick), string> _hashByPeerTick = new();
+    private readonly ConcurrentDictionary<int, long> _firstPeerAtTick = new();
+    private readonly Dictionary<long, long> _pendingJoiners = new(); // peer -> ticks when it started waiting
     private readonly HashSet<int> _reportedDesyncTicks = [];
     private long? _checkpointOwnerId;
     private SnapshotManifest? _checkpointManifest;
@@ -296,8 +299,18 @@ public sealed class DedicatedServer : IAsyncDisposable
                 GameVersion = version, ModHash = modHash, ClientVersion = NetworkProtocol.ClientVersion,
                 CheckpointOwner = _checkpointOwnerId == peer.Id
             });
-            // A peer arriving after the start replays the same snapshot plus every order issued since.
-            if (GameRunning) SendCatchUp(peer);
+            // A peer arriving after the start waits for a fresh checkpoint: replaying thousands of ticks
+            // would re-simulate the colony and diverge. The owner is asked for a snapshot at its current tick.
+            if (GameRunning)
+            {
+                lock (_pendingJoiners) _pendingJoiners[peer.Id] = Environment.TickCount64;
+                Console.WriteLine($"[server] peer {peer.Id} waiting for a fresh checkpoint");
+                if (_checkpointOwnerId is { } owner && owner != peer.Id
+                    && _peers.TryGetValue(owner, out var ownerPeer) && ownerPeer.Joined && !HistoryTruncated)
+                    ownerPeer.TryQueue(new WireMessage { Type = "CheckpointNeeded" });
+                else
+                    SendCatchUp(peer); // first peer, no owner, or an incomplete history it must be told about
+            }
         }
         finally { _stateGate.Release(); }
     }
@@ -424,6 +437,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         {
             Volatile.Write(ref _checkpointManifest, manifest);
             Volatile.Write(ref _checkpointTick, message.Tick);
+            Console.WriteLine($"[server] checkpoint accepted at tick {message.Tick} ({manifest.Id[..8]})");
             lock (_history)
             {
                 _history.RemoveAll(command => command.Tick <= message.Tick);
@@ -433,6 +447,16 @@ public sealed class DedicatedServer : IAsyncDisposable
         foreach (var recipient in _peers.Values)
             if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Checkpoint", Tick = message.Tick, Manifest = manifest });
         peer.Queue(new WireMessage { Type = "WorldCommitted", RequestId = message.RequestId, Manifest = manifest });
+        // Anyone waiting to join can now start from this snapshot instead of replaying the gap.
+        List<Peer> waiting;
+        lock (_pendingJoiners)
+        {
+            waiting = [];
+            foreach (var id in _pendingJoiners.Keys)
+                if (_peers.TryGetValue(id, out var joiner) && joiner.Joined) waiting.Add(joiner);
+            _pendingJoiners.Clear();
+        }
+        foreach (var joiner in waiting) SendCatchUp(joiner);
         await PersistSessionAsync(peer.Token).ConfigureAwait(false);
     }
 
@@ -453,6 +477,8 @@ public sealed class DedicatedServer : IAsyncDisposable
             Volatile.Write(ref _checkpointTick, 0);
             _firstHashAtTick.Clear();
             _firstCategoriesAtTick.Clear();
+            _hashByPeerTick.Clear();
+            _firstPeerAtTick.Clear();
             lock (_reportedDesyncTicks) _reportedDesyncTicks.Clear();
             Volatile.Write(ref _gameRunning, 1);
             var seed = Volatile.Read(ref _seed);
@@ -521,12 +547,18 @@ public sealed class DedicatedServer : IAsyncDisposable
         if (message.Tick < 0 || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
         var hash = message.Sha256!;
         PruneHashWindow(message.Tick);
-        if (!_firstHashAtTick.TryGetValue(message.Tick, out var first))
+        // Only distinct peers are comparable: the same peer reporting a tick twice is a resend, not a conflict.
+        var key = (peer.Id, message.Tick);
+        if (!_hashByPeerTick.TryAdd(key, hash)) return;
+        if (!_firstPeerAtTick.TryGetValue(message.Tick, out var firstPeer))
         {
+            _firstPeerAtTick[message.Tick] = peer.Id;
             _firstHashAtTick[message.Tick] = hash;
             if (message.Categories is { Length: > 0 }) _firstCategoriesAtTick[message.Tick] = message.Categories;
             return;
         }
+        if (firstPeer == peer.Id) return;
+        var first = _firstHashAtTick[message.Tick];
         if (string.Equals(first, hash, StringComparison.Ordinal)) return;
         lock (_reportedDesyncTicks)
         {
@@ -552,6 +584,23 @@ public sealed class DedicatedServer : IAsyncDisposable
     /// Keeps only a recent window of comparison hashes. Without this the dictionaries grow with play time,
     /// which shows up as slowly increasing memory on a long-running server.
     /// </summary>
+    /// <summary>If the owner never answers CheckpointNeeded, fall back to the existing snapshot.</summary>
+    private void ExpirePendingJoiners()
+    {
+        List<Peer> stale = [];
+        lock (_pendingJoiners)
+        {
+            foreach (var pair in _pendingJoiners.ToList())
+            {
+                if (Environment.TickCount64 - pair.Value < 10_000) continue;
+                _pendingJoiners.Remove(pair.Key);
+                if (_peers.TryGetValue(pair.Key, out var peer) && peer.Joined) stale.Add(peer);
+            }
+        }
+        if (stale.Count == 0) return;
+        foreach (var peer in stale) SendCatchUp(peer);
+    }
+
     private void PruneHashWindow(int newestTick)
     {
         if (newestTick - _hashWindowFloor < HashWindow) return;
@@ -562,6 +611,10 @@ public sealed class DedicatedServer : IAsyncDisposable
             if (tick < floor) _firstHashAtTick.TryRemove(tick, out _);
         foreach (var tick in _firstCategoriesAtTick.Keys)
             if (tick < floor) _firstCategoriesAtTick.TryRemove(tick, out _);
+        foreach (var key in _hashByPeerTick.Keys)
+            if (key.Tick < floor) _hashByPeerTick.TryRemove(key, out _);
+        foreach (var tick in _firstPeerAtTick.Keys)
+            if (tick < floor) _firstPeerAtTick.TryRemove(tick, out _);
     }
 
     /// <summary>Sends the current epoch and the full command history to a peer that arrives mid-session.</summary>
@@ -570,6 +623,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         var world = CheckpointManifest ?? WorldManifest;
         var epoch = Epoch;
         if (world is null || epoch < 0) return;
+        Console.WriteLine($"[server] catch-up -> peer {peer.Id}: tick {Tick}, snapshot {CheckpointTick}, history {HistoryCount}");
         peer.Queue(new WireMessage
         {
             Type = "Started", Epoch = epoch, Tick = Tick, SnapshotTick = CheckpointTick,
@@ -590,6 +644,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
                 if (!GameRunning) continue;
+                ExpirePendingJoiners();
                 var tick = Interlocked.Increment(ref _tick);
                 if (tick % 6 != 0) continue;
                 foreach (var peer in _peers.Values)

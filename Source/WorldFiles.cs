@@ -10,11 +10,16 @@ internal static class WorldFiles
 
     public static string Directory => Path.Combine(GenFilePaths.SaveDataFolderPath, "TurboTickShared");
 
+    /// <summary>
+    /// Saves the running colony and returns the file it actually produced. GameDataSaveLoader.SaveGame
+    /// takes a save *name*, not a path, so the path has to be resolved through GenFilePaths afterwards.
+    /// </summary>
     public static string SaveCurrentGame()
     {
-        System.IO.Directory.CreateDirectory(Directory);
-        var path = Path.Combine(Directory, "session-" + DateTime.UtcNow.Ticks + ".rws");
-        GameDataSaveLoader.SaveGame(path);
+        var name = "TurboTickCheckpoint_" + DateTime.UtcNow.Ticks;
+        GameDataSaveLoader.SaveGame(name);
+        var path = GenFilePaths.FilePathForSavedGame(name);
+        if (!File.Exists(path)) throw new FileNotFoundException("保存后找不到存档文件：" + path);
         return path;
     }
 
@@ -22,5 +27,18 @@ internal static class WorldFiles
     {
         System.IO.Directory.CreateDirectory(Directory);
         return Path.Combine(Directory, id + ".rws");
+    }
+
+    /// <summary>
+    /// Moves a downloaded save into the game's Saves folder and returns its save name.
+    /// LoadGame resolves names under Saves/, so a file elsewhere is not loadable even with a full path.
+    /// </summary>
+    public static string PrepareLoad(string downloadedPath)
+    {
+        var name = Path.GetFileNameWithoutExtension(downloadedPath);
+        var target = GenFilePaths.FilePathForSavedGame(name);
+        if (!string.Equals(Path.GetFullPath(target), Path.GetFullPath(downloadedPath), StringComparison.OrdinalIgnoreCase))
+            File.Copy(downloadedPath, target, overwrite: true);
+        return name;
     }
 }

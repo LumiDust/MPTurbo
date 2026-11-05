@@ -22,6 +22,19 @@ async Task Until(Func<bool> condition, int seconds = 5)
     using var c = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
     while (!condition()) await Task.Delay(15, c.Token);
 }
+void AutoCheckpoint(DedicatedClient owner, DedicatedServer server, int size = 4096)
+{
+    owner.CheckpointRequested += () =>
+    {
+        var payload = new byte[size];
+        _ = Task.Run(async () =>
+        {
+            try { await owner.CheckpointWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(payload), new MemoryStream(payload), server.Tick); }
+            catch { /* the server may already have a fresh checkpoint */ }
+        });
+    };
+}
+
 async Task Throws(Func<Task> body, string? code = null)
 {
     try { await body(); }
@@ -424,9 +437,11 @@ await Test("a peer joining mid-session receives the epoch, tick and full command
     await server.StartAsync();
     await using var host = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     var world = new byte[8192]; new Random(11).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
+    AutoCheckpoint(host, server);
     await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
     await Until(() => server.HistoryCount == 1);
     await using var late = new DedicatedClient();
@@ -449,6 +464,7 @@ await Test("session seed reaches every peer and survives a server restart with i
     var seeds = new List<int>();
     host.WorldStarted += (session, _) => seeds.Add(session.Seed);
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     var world = new byte[4096]; new Random(13).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
@@ -521,6 +537,7 @@ await Test("after a desync the controller can restart the colony with a fresh ep
     await server.StartAsync();
     await using var host = new DedicatedClient(); await using var guest = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
     var world = new byte[4096]; new Random(21).NextBytes(world);
     var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
@@ -544,6 +561,7 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     await server.StartAsync();
     await using var host = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     Check(host.IsCheckpointOwner, "first peer owns checkpoints");
     var world = new byte[4096]; new Random(31).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
@@ -567,7 +585,7 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
     await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
     var info = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    Check(info.SnapshotTick == tick, "late peer starts from the checkpoint tick");
+    Check(info.SnapshotTick >= tick, "late peer starts from a checkpoint at or after the trim point");
     await Until(() => { lock (replay) return replay.Count == 1; });
     Check(replay[0].Kind == "draft", "only the delta replays");
 });
@@ -580,6 +598,7 @@ await Test("server rejects unknown command kinds and throttles a flooding client
     var errors = new List<string>();
     host.StatusChanged += _ => { };
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     var world = new byte[2048]; new Random(41).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
@@ -627,6 +646,7 @@ await Test("a dropped peer reconnects to the checkpoint, replays the delta and c
     await server.StartAsync();
     await using var host = new DedicatedClient(); await using var guest = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
     var world = new byte[4096]; new Random(61).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
@@ -752,6 +772,7 @@ await Test("an overflowed history tells the joining peer it cannot catch up inst
     await server.StartAsync();
     await using var host = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     var world = new byte[2048]; new Random(91).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
@@ -902,6 +923,7 @@ await Test("transport command round-trips and the server accepts the kind", asyn
     await server.StartAsync();
     await using var host = new DedicatedClient(); await using var guest = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    AutoCheckpoint(host, server);
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
     var world = new byte[2048]; new Random(111).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));

@@ -35,6 +35,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<int, string>? DesyncDetected;
     public event Action<int, SnapshotManifest>? CheckpointPublished;
     public event Action? CatchUpIncomplete;
+    public event Action? CheckpointRequested;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
@@ -480,6 +481,9 @@ public sealed class DedicatedClient : IAsyncDisposable
                         var desyncTick = message.Tick;
                         var detail = message.Message ?? "state";
                         Publish(session, () => DesyncDetected?.Invoke(desyncTick, detail));
+                        break;
+                    case "CheckpointNeeded":
+                        Publish(session, () => CheckpointRequested?.Invoke());
                         break;
                     case "Checkpoint":
                         if (message.Manifest is not null) Validation.Manifest(message.Manifest);

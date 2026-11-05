@@ -19,20 +19,28 @@ internal static class RoomConnection
     public static bool CanEdit => !TurboState.Authority.SessionRequested
         || (TurboState.Authority.SessionConnected && client?.CanEdit == true);
 
+    /// <summary>Every user-visible status also lands in Player.log so a run can be reviewed afterwards.</summary>
+    private static void SetStatus(string text)
+    {
+        Status = text;
+        Log.Message("[TurboTick] " + text);
+    }
+
     public static void Connect(TurboTickSettings settings)
     {
+        SetStatus("开始连接 " + settings.ServerHost.Trim() + ":" + settings.ServerPort);
         // Must run on the game thread before starting the background hash/connection operation.
         ManifestInputs inputs;
         try { inputs = CompatibilityManifest.Capture(); }
-        catch (Exception error) { Status = error.Message; return; }
+        catch (Exception error) { SetStatus("兼容性指纹失败：" + error.Message); return; }
         var host = settings.ServerHost.Trim();
         if (!int.TryParse(settings.ServerPort, out var port) || port is < 1 or > 65535)
         {
-            Status = "端口须在 1..65535";
+            SetStatus("端口须在 1..65535");
             return;
         }
         var name = settings.PlayerName.Trim();
-        if (name.Length is < 1 or > 32) { Status = "玩家名称须为 1..32 字符"; return; }
+        if (name.Length is < 1 or > 32) { SetStatus("玩家名称须为 1..32 字符"); return; }
         Leave();
         var id = ++generation;
         var cancel = lifetime = new CancellationTokenSource();
@@ -44,11 +52,12 @@ internal static class RoomConnection
         socket.PolicyChanged += policy => Post(id, () =>
         {
             TurboState.Authority.ApplyServer(policy);
-            Status = "房间已连接 · 服务端设置修订 " + policy.Revision;
+            SetStatus("房间已连接 · 服务端设置修订 " + policy.Revision);
+            if (publishOnConnect && !publishedOnce) { publishedOnce = true; StartSharedColony(); }
         });
         socket.StatusChanged += text => Post(id, () =>
         {
-            Status = text;
+            SetStatus(text);
             if (!socket.IsConnected) TurboState.Authority.ConnectionLost();
         });
         socket.WorldStarted += (session, manifest) => Post(id, () =>
@@ -58,7 +67,7 @@ internal static class RoomConnection
                 // The controller just uploaded this save; its running game already is that world.
                 SharedColony.OnWorldStarted(session, manifest);
                 SharedColony.OnWorldLoaded();
-                Status = "共享殖民地已开始（本机为来源存档）";
+                SetStatus("共享殖民地已开始（本机为来源存档）");
                 return;
             }
             Status = "共享殖民地已开始，正在同步存档…";
@@ -68,6 +77,7 @@ internal static class RoomConnection
         socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
         socket.DesyncDetected += (tick, detail) => Post(id, () => SharedColony.OnDesync(tick, detail));
+        socket.CheckpointRequested += () => Post(id, () => PublishCheckpoint(SharedColony.Session.Barrier.AppliedTick));
         socket.CatchUpIncomplete += () => Post(id, () =>
         {
             const string reason = "服务器命令历史已截断，无法完整追平；等待控制者检查点后重连";
@@ -172,14 +182,15 @@ internal static class RoomConnection
                     if (id != generation) return;
                     try
                     {
-                        GameDataSaveLoader.LoadGame(path);
-                        SharedColony.OnWorldLoaded();
-                        Status = "共享殖民地已载入";
+                        var saveName = WorldFiles.PrepareLoad(path);
+                        SetStatus("正在载入共享存档：" + saveName);
+                        SharedColony.BeginWorldLoad();
+                        GameDataSaveLoader.LoadGame(saveName);
                     }
-                    catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); Status = "载入共享存档失败：" + error.Message; }
+                    catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); SetStatus("载入共享存档失败：" + error.Message); }
                 });
             }
-            catch (Exception error) { Post(id, () => Status = "下载共享存档失败：" + error.Message); }
+            catch (Exception error) { Post(id, () => SetStatus("下载共享存档失败：" + error.Message)); }
         }));
     }
 
@@ -194,6 +205,39 @@ internal static class RoomConnection
             try { await socket.ReportHashAsync(tick, sha256, categories, token).ConfigureAwait(false); }
             catch (Exception error) { Post(id, () => Status = "状态校验上报失败：" + error.Message); }
         });
+    }
+
+    private static bool autoConnectTried;
+    private static bool publishOnConnect;
+    private static bool publishedOnce;
+
+    /// <summary>Developer aid used by the acceptance run: join once after a colony loads.</summary>
+    public static void AutoConnectOnce()
+    {
+        if (autoConnectTried) return;
+        autoConnectTried = true;
+        // Automated acceptance runs pass -turbotick-connect=host:port on the command line.
+        string? argument = null;
+        if (GenCommandLine.TryGetCommandLineArg("turbotick-connect", out argument) && !string.IsNullOrWhiteSpace(argument))
+        {
+            var parts = argument.Split(':');
+            var host = parts[0].Trim();
+            var port = parts.Length > 1 ? parts[1].Trim() : "30572";
+            var commandLineSettings = new TurboTickSettings
+            {
+                ServerHost = host.Length > 0 ? host : "127.0.0.1",
+                ServerPort = port,
+                PlayerName = "AcceptanceClient"
+            };
+            publishOnConnect = GenCommandLine.CommandLineArgPassed("turbotick-publish");
+            Log.Message("[TurboTick] 命令行自动连接：" + commandLineSettings.ServerHost + ":" + port);
+            Connect(commandLineSettings);
+            return;
+        }
+        var settings = TurboTickMod.Settings;
+        if (settings is not { autoConnect: true } || string.IsNullOrWhiteSpace(settings.ServerHost)) return;
+        Log.Message("[TurboTick] 开发用自动连接：开始");
+        Connect(settings);
     }
 
     public static bool IsCheckpointOwner => client?.IsCheckpointOwner == true;

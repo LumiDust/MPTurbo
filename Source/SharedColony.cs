@@ -39,6 +39,7 @@ public static class SharedColony
 
     public static void OnWorldStarted(SessionInfo info, SnapshotManifest manifest)
     {
+        reportingArmed = false;
         Session.BeginLoading(info.Epoch, manifest.Id);
         Session.Barrier.Reset(Math.Max(0, info.SnapshotTick));
         Session.Barrier.Publish(info.Tick);
@@ -120,9 +121,18 @@ public static class SharedColony
     }
 
     /// <summary>Periodic canonical hash so the server can prove all peers still simulate the same colony.</summary>
+    private static int lastHashedTick = -1;
+    private static bool reportingArmed;
+
     private static void ReportHash()
     {
         var tick = Session.Barrier.AppliedTick;
+        // One report per tick: a paused or throttled tick would otherwise be re-reported with drifted state
+        // and look like a desync to the server.
+        // Only report once this peer actually runs the shared colony; a peer still sitting in its own
+        // quicktest colony would otherwise publish unrelated hashes and look like a desync.
+        if (!reportingArmed || tick <= lastHashedTick) return;
+        lastHashedTick = tick;
         try
         {
             var (entries, categories) = DescribeColony();
@@ -172,12 +182,29 @@ public static class SharedColony
         RoomConnection.ReconnectFromFault();
     }
 
+    private static bool loadPending;
+    private static float loadStartedAt;
+
+    public static bool LoadPending => loadPending;
+
+    public static void BeginWorldLoad()
+    {
+        loadPending = true;
+        loadStartedAt = Clock.Now;
+        Session.WorldLoaded();
+    }
+
     /// <summary>The caller confirms the shared world is now the running game.</summary>
     public static void OnWorldLoaded()
     {
-        Session.WorldLoaded();
+        loadPending = false;
+        reportingArmed = true;
+        lastHashedTick = -1;
         Session.Playing();
+        SetLoadedStatus();
     }
+
+    private static void SetLoadedStatus() => Log.Message("[TurboTick] 共享殖民地已载入并开始");
 
     public static void OnWorldLoadFailed(string reason)
     {
@@ -196,6 +223,11 @@ public static class SharedColony
 
     public static void Update()
     {
+        if (loadPending && Clock.Now - loadStartedAt > 120f)
+        {
+            loadPending = false;
+            OnWorldLoadFailed("载入超时：120 秒内没有切换到共享存档");
+        }
         if (!Gating) return;
         // While paused the game does not tick, so drain anything that became due.
         ApplyDue();

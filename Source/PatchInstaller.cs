@@ -35,9 +35,9 @@ public static class PatchInstaller
             && status.GetValueOrDefault("order")
             && status.GetValueOrDefault("gate")
             && status.GetValueOrDefault("apply");
-        if (!AllCritical)
-            Log.Warning("[TurboTick] 部分补丁未挂载，共享殖民地将被禁用：" + string.Join(" ",
-                status.Select(pair => pair.Key + (pair.Value ? "✓" : "✗"))));
+        var summary = string.Join(" ", status.Select(pair => pair.Key + (pair.Value ? "✓" : "✗")));
+        if (AllCritical) Log.Message("[TurboTick] 补丁已就绪：" + summary);
+        else Log.Warning("[TurboTick] 部分补丁未挂载，共享殖民地将被禁用：" + summary);
     }
 
     private static void Try(Harmony harmony, string name, Type patchClass)

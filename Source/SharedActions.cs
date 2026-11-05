@@ -182,17 +182,18 @@ public static class SharedActions
     }
 }
 
+// Harmony binds Postfix arguments by parameter name, so these must match the 1.7 signatures exactly.
 [HarmonyPatch(typeof(DesignationManager), nameof(DesignationManager.AddDesignation))]
 internal static class DesignationCapturePatch
 {
-    private static void Postfix(Designation newDesignation) => SharedActions.CaptureDesignation(newDesignation);
+    private static void Postfix(Designation newDes) => SharedActions.CaptureDesignation(newDes);
 }
 
 [HarmonyPatch(typeof(GenConstruct), nameof(GenConstruct.PlaceBlueprintForBuild))]
 internal static class BlueprintCapturePatch
 {
-    private static void Postfix(BuildableDef buildable, IntVec3 loc, Map map, Rot4 rotation, ThingDef stuff) =>
-        SharedActions.CaptureBlueprint(buildable, stuff, loc, map, rotation);
+    private static void Postfix(BuildableDef sourceDef, IntVec3 center, Map map, Rot4 rotation, ThingDef stuff) =>
+        SharedActions.CaptureBlueprint(sourceDef, stuff, center, map, rotation);
 }
 
 [HarmonyPatch(typeof(Pawn_DraftController), nameof(Pawn_DraftController.Drafted), MethodType.Setter)]
@@ -208,8 +209,8 @@ internal static class DraftCapturePatch
 [HarmonyPatch(typeof(CompTransporter), nameof(CompTransporter.AddToTheToLoadList))]
 internal static class TransportCapturePatch
 {
-    private static void Postfix(CompTransporter __instance, TransferableOneWay transferable, int count) =>
-        SharedActions.CaptureTransport(__instance, transferable, count);
+    private static void Postfix(CompTransporter __instance, TransferableOneWay t, int count) =>
+        SharedActions.CaptureTransport(__instance, t, count);
 }
 
 [HarmonyPatch(typeof(Pawn_JobTracker), nameof(Pawn_JobTracker.TryTakeOrderedJob))]

@@ -5,9 +5,20 @@ namespace TurboTick;
 /// <summary>Per-game settings only; sockets and server policy are transient, never serialized into a save.</summary>
 public class TurboGameComponent : GameComponent
 {
-    // The base has a protected parameterless ctor, but Game.FillComponents constructs
-    // concrete components with a Game argument (same contract as built-in components).
-    public TurboGameComponent(Game game) { }
+    // Game.FillComponents instantiates components reflectively; provide both shapes so the component is
+    // created regardless of which constructor the engine picks.
+    public TurboGameComponent()
+    {
+        Log.Message("[TurboTick] GameComponent 已创建（无参）");
+        if (SharedColony.LoadPending) SharedColony.OnWorldLoaded();
+    }
+
+    public TurboGameComponent(Game game)
+    {
+        Log.Message("[TurboTick] GameComponent 已创建（Game）");
+        // Reaching a new game means the pending shared save finished loading.
+        if (SharedColony.LoadPending) SharedColony.OnWorldLoaded();
+    }
 
     private bool savedEnabled = true;
     private float savedMultiplier = 2f;
@@ -41,6 +52,7 @@ public class TurboGameComponent : GameComponent
     public override void GameComponentUpdate()
     {
         TurboState.Update();
+        RoomConnection.AutoConnectOnce();
         SharedColony.Update();
     }
     public override void GameComponentOnGUI() => TurboHud.Draw();

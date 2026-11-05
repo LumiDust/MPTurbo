@@ -20,6 +20,8 @@ public class TurboTickSettings : ModSettings
     public string ServerHost = "127.0.0.1";
     public string ServerPort = "30572";
     public string PlayerName = "Player";
+    /// <summary>Developer aid: join the configured server as soon as a colony is loaded.</summary>
+    public bool autoConnect = false;
     private float draftMultiplier = 2f;
     private float draftCap = 60f;
     private bool draftEnabled;
@@ -38,6 +40,7 @@ public class TurboTickSettings : ModSettings
         Scribe_Values.Look(ref ServerHost, "serverHost", "127.0.0.1");
         Scribe_Values.Look(ref ServerPort, "serverPort", "30572");
         Scribe_Values.Look(ref PlayerName, "playerName", "Player");
+        Scribe_Values.Look(ref autoConnect, "autoConnect", false);
     }
 
     public void Draw(Rect area)
