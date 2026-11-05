@@ -176,6 +176,15 @@ internal static class RoomConnection
     }
 
     public static bool IsCheckpointOwner => client?.IsCheckpointOwner == true;
+
+    /// <summary>Desync recovery: drop the session and join again, which reloads the checkpoint and replays the delta.</summary>
+    public static void ReconnectFromFault()
+    {
+        var settings = TurboTickMod.Settings;
+        if (settings == null || string.IsNullOrWhiteSpace(settings.ServerHost)) return;
+        SharedColony.Session.Leave();
+        Connect(settings);
+    }
     private static int checkpointing;
 
     /// <summary>Checkpoint owner: saves the colony at the current tick and publishes it so late joins replay less.</summary>

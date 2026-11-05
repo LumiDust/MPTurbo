@@ -29,4 +29,6 @@
   <TurboTick_SharedFault>共享殖民地异常：{0}</TurboTick_SharedFault>
   <TurboTick_Enable>启用额外倍率（默认开启，随房间同步）</TurboTick_Enable>
   <TurboTick_Diagnostics>诊断信息（反馈问题请附上）</TurboTick_Diagnostics>
+  <TurboTick_AutoRecover>分叉后自动恢复</TurboTick_AutoRecover>
+  <TurboTick_AutoRecoverDesc>检测到状态分叉时自动重连并从服务器检查点追赶；关闭后只提示，由你手动处理。</TurboTick_AutoRecoverDesc>
 </LanguageData>

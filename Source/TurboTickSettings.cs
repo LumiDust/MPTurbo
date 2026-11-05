@@ -11,6 +11,8 @@ public class TurboTickSettings : ModSettings
     public float multiplier = 2f;
     public float maxRateCap = 60f;
     public bool showHud = true;
+    /// <summary>Detected divergence: reconnect and catch up from the server's checkpoint automatically.</summary>
+    public bool autoRecover = true;
     public string ServerHost = "127.0.0.1";
     public string ServerPort = "30572";
     public string PlayerName = "Player";
@@ -26,6 +28,7 @@ public class TurboTickSettings : ModSettings
         Scribe_Values.Look(ref multiplier, "multiplier", 2f);
         Scribe_Values.Look(ref maxRateCap, "maxRateCap", 60f);
         Scribe_Values.Look(ref showHud, "showHud", true);
+        Scribe_Values.Look(ref autoRecover, "autoRecover", true);
         Scribe_Values.Look(ref ServerHost, "serverHost", "127.0.0.1");
         Scribe_Values.Look(ref ServerPort, "serverPort", "30572");
         Scribe_Values.Look(ref PlayerName, "playerName", "Player");
@@ -68,6 +71,7 @@ public class TurboTickSettings : ModSettings
                 room ? T("TurboTick_ApplyRoom") : T("TurboTick_ApplyLocal"), true, true, RoomConnection.CanEdit))
             TurboState.Request(draftEnabled, draftMultiplier, draftCap);
         listing.CheckboxLabeled(T("TurboTick_ShowHud"), ref showHud, T("TurboTick_ShowHudDesc"));
+        listing.CheckboxLabeled(T("TurboTick_AutoRecover"), ref autoRecover, T("TurboTick_AutoRecoverDesc"));
         listing.Gap(6f);
         var shared = listing.GetRect(30f);
         if (Widgets.ButtonText(new Rect(shared.x, shared.y, 320f, 28f), T("TurboTick_StartShared"), true, true, TurboState.Authority.SessionConnected && RoomConnection.CanEdit))

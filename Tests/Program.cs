@@ -618,6 +618,39 @@ await Test("desync detail names the category that diverged", async () =>
     Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(5)) == "designations", "only the differing category is named");
 });
 
+await Test("a dropped peer reconnects to the checkpoint, replays the delta and can act again", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("recover-session")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient(); await using var guest = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
+    var world = new byte[4096]; new Random(61).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+    await Until(() => server.Tick >= 4);
+    var checkpoint = new byte[4096]; new Random(62).NextBytes(checkpoint);
+    await host.CheckpointWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(checkpoint), new MemoryStream(checkpoint), server.Tick);
+    await host.SendCommandAsync("draft", "9|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+
+    await guest.DisconnectAsync();
+    var replay = new List<GameCommand>();
+    var info = new TaskCompletionSource<SessionInfo>();
+    guest.WorldStarted += (session, _) => info.TrySetResult(session);
+    guest.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
+    await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
+    var resumed = await info.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(resumed.SnapshotTick == server.CheckpointTick, "resumes from the checkpoint");
+    await Until(() => { lock (replay) return replay.Count == 1; });
+    Check(replay[0].Kind == "draft", "only the post-checkpoint delta replays");
+    await guest.SendCommandAsync("designation", "Mine|0|5|5"u8.ToArray());
+    await Until(() => server.HistoryCount == 2);
+    Check(server.HistoryCount == 2, "reconnected peer can act again");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

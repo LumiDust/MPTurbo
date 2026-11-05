@@ -129,10 +129,20 @@ public static class SharedColony
         return (all, [StateHash.Compute(pawns), StateHash.Compute(things), StateHash.Compute(designations)]);
     }
 
+    private static float lastRecoveryAt = -999f;
+
     public static void OnDesync(int tick, string detail)
     {
         Session.Fault($"状态分叉：tick {tick}（{detail}）与其他玩家不一致");
-        Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}，类别 {detail}）。请由控制者重新发布殖民地。");
+        Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}，类别 {detail}）。");
+        var settings = TurboTickMod.Settings;
+        if (settings == null || !settings.autoRecover) return;
+        // Reuse the join path: reconnect, reload the checkpoint and replay the delta. Rate-limited so a
+        // persistent divergence cannot become a reconnect storm.
+        if (Clock.Now - lastRecoveryAt < 60f) return;
+        lastRecoveryAt = Clock.Now;
+        Log.Message("[TurboTick] 自动恢复：重新连接并从检查点追赶。");
+        RoomConnection.ReconnectFromFault();
     }
 
     /// <summary>Applies commands whose tick has arrived. Also used while paused so late commands still land.</summary>
