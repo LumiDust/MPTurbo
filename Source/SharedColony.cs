@@ -78,6 +78,30 @@ public static class SharedColony
         return false;
     }
 
+    private static bool catchingUp;
+
+    /// <summary>
+    /// Runs extra ticks while behind the server. Both sides advance at roughly 60 ticks per second, so
+    /// without a burst a peer that joined late would stay behind forever.
+    /// </summary>
+    public static void CatchUpTick()
+    {
+        if (catchingUp || !Gating) return;
+        var steps = CatchUpPlan.Steps(Session.Barrier.Backlog);
+        if (steps == 0) return;
+        catchingUp = true;
+        try
+        {
+            var tickManager = Find.TickManager;
+            for (var i = 0; i < steps; i++)
+            {
+                if (tickManager == null || Session.Phase != SharedPhase.Playing || !Session.Barrier.CanAdvance) break;
+                tickManager.DoSingleTick();
+            }
+        }
+        finally { catchingUp = false; }
+    }
+
     /// <summary>Called after each local simulation tick: consume the tick and apply the commands due at it.</summary>
     public static void OnLocalTick()
     {
@@ -189,5 +213,9 @@ internal static class TickGatePatch
 [HarmonyPatch(typeof(TickManager), nameof(TickManager.DoSingleTick))]
 internal static class TickApplyPatch
 {
-    private static void Postfix() => SharedColony.OnLocalTick();
+    private static void Postfix()
+    {
+        SharedColony.OnLocalTick();
+        SharedColony.CatchUpTick();
+    }
 }

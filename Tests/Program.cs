@@ -802,6 +802,28 @@ await Test("command batches carry their epoch and the checkpoint owner passes to
     Check(server.CheckpointManifest is not null, "new owner can checkpoint");
 });
 
+await Test("catch-up budget closes the gap instead of matching the server's pace", () =>
+{
+    Check(TurboTick.Simulation.CatchUpPlan.Steps(0) == 0, "caught up means no burst");
+    Check(TurboTick.Simulation.CatchUpPlan.Steps(-5) == 0, "never negative");
+    Check(TurboTick.Simulation.CatchUpPlan.Steps(3) == 3, "small gap runs the gap");
+    Check(TurboTick.Simulation.CatchUpPlan.Steps(500) == TurboTick.Simulation.CatchUpPlan.MaxPerFrame,
+        "large gap is bounded per frame");
+    Check(TurboTick.Simulation.CatchUpPlan.Steps(500, 0) == 0, "budget disabled");
+    // 1800 ticks behind with 8 per frame at 60 fps closes in under 4 seconds.
+    var backlog = 1800;
+    var frames = 0;
+    while (backlog > 0 && frames < 10_000)
+    {
+        backlog -= TurboTick.Simulation.CatchUpPlan.Steps(backlog);
+        frames++;
+    }
+    Check(backlog <= 0 && frames < 240, $"gap closes in {frames} frames");
+    Check(TurboTick.Simulation.CatchUpPlan.PreferCheckpoint(7200), "huge gap prefers a fresh checkpoint");
+    Check(!TurboTick.Simulation.CatchUpPlan.PreferCheckpoint(600), "small gap replays");
+    return Task.CompletedTask;
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
