@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LanguageData>
 
-  <MPTurbo_Enable>启用倍率</MPTurbo_Enable>
-  <MPTurbo_EnableDesc>关闭后倍率恒为 1x，HUD 与诊断仍然可用。</MPTurbo_EnableDesc>
+  <MPTurbo_Enable>启用倍率（默认关闭）</MPTurbo_Enable>
+  <MPTurbo_EnableDesc>默认不生效，避免装完 mod 就莫名其妙变成加速。需要你手动打开。</MPTurbo_EnableDesc>
+  <MPTurbo_TurnOn>启用倍率</MPTurbo_TurnOn>
 
   <MPTurbo_Multiplier>倍率：×{0}</MPTurbo_Multiplier>
 

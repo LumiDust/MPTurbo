@@ -69,12 +69,22 @@ namespace MpTurbo
             float bw = 54f;
             bool can = MpSync.CanEdit;
 
-            if (Widgets.ButtonText(new Rect(inner.x, by, bw, 22f), "-", true, true, can))
-                MpSync.Step(-1f);
-            if (Widgets.ButtonText(new Rect(inner.x + bw + 4f, by, bw, 22f), "+", true, true, can))
-                MpSync.Step(1f);
-            if (Widgets.ButtonText(new Rect(inner.x + (bw + 4f) * 2f, by, bw + 12f, 22f), "1x", true, true, can))
-                MpSync.SetMultiplier(1f);
+            // 未启用时，第一个位置变成「启用」开关——避免用户还要去设置里找
+            if (!s.enabled)
+            {
+                if (Widgets.ButtonText(new Rect(inner.x, by, bw + 60f, 22f),
+                        "MPTurbo_TurnOn".Translate().ToString(), true, true, can))
+                    s.enabled = true;
+            }
+            else
+            {
+                if (Widgets.ButtonText(new Rect(inner.x, by, bw, 22f), "-", true, true, can))
+                    MpSync.Step(-1f);
+                if (Widgets.ButtonText(new Rect(inner.x + bw + 4f, by, bw, 22f), "+", true, true, can))
+                    MpSync.Step(1f);
+                if (Widgets.ButtonText(new Rect(inner.x + (bw + 4f) * 2f, by, bw + 12f, 22f), "1x", true, true, can))
+                    MpSync.SetMultiplier(1f);
+            }
 
             Text.Font = GameFont.Small;
         }

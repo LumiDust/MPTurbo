@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LanguageData>
 
-  <MPTurbo_Enable>Enable multiplier</MPTurbo_Enable>
-  <MPTurbo_EnableDesc>When off, the multiplier stays at 1x. HUD and diagnostics still work.</MPTurbo_EnableDesc>
+  <MPTurbo_Enable>Enable multiplier (off by default)</MPTurbo_Enable>
+  <MPTurbo_EnableDesc>Off by default so installing the mod does not silently speed up your game. Turn it on explicitly.</MPTurbo_EnableDesc>
+  <MPTurbo_TurnOn>Enable multiplier</MPTurbo_TurnOn>
 
   <MPTurbo_Multiplier>Multiplier: x{0}</MPTurbo_Multiplier>
 

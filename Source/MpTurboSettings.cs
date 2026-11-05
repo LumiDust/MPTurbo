@@ -5,8 +5,8 @@ namespace MpTurbo
 {
     public class MpTurboSettings : ModSettings
     {
-        /// <summary>总开关。关闭后倍率恒为 1x，其他功能（HUD/诊断）仍可用。</summary>
-        public bool enabled = true;
+        /// <summary>总开关。**默认关闭**：必须先由用户显式打开，倍率才生效。</summary>
+        public bool enabled = false;
 
         /// <summary>倍率上限（UI 滑块上限）。</summary>
         public float maxMultiplier = 20f;
@@ -31,7 +31,7 @@ namespace MpTurbo
 
         public override void ExposeData()
         {
-            Scribe_Values.Look(ref enabled, "enabled", true);
+            Scribe_Values.Look(ref enabled, "enabled", false);
             Scribe_Values.Look(ref maxMultiplier, "maxMultiplier", 20f);
             Scribe_Values.Look(ref maxRateCap, "maxRateCap", 60f);
             Scribe_Values.Look(ref hostOnly, "hostOnly", false);
