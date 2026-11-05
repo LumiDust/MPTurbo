@@ -68,6 +68,12 @@ internal static class RoomConnection
         socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
         socket.DesyncDetected += (tick, detail) => Post(id, () => SharedColony.OnDesync(tick, detail));
+        socket.CatchUpIncomplete += () => Post(id, () =>
+        {
+            const string reason = "服务器命令历史已截断，无法完整追平；等待控制者检查点后重连";
+            SharedColony.OnWorldLoadFailed(reason);
+            Status = reason;
+        });
         Track(Task.Run(async () =>
         {
             try

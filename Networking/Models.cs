@@ -37,7 +37,7 @@ public sealed record ClientHello(string PlayerName, string GameVersion, string M
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
 public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0);
 public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 30572, string DataDirectory = "Saved",
-    string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true);
+    string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true, int MaxHistory = 200_000);
 public sealed record SnapshotManifest(string Id, long Length, int ChunkSize, IReadOnlyList<string> ChunkHashes);
 public sealed record SnapshotChunk(string Id, int Index, byte[] Data, string Sha256);
 

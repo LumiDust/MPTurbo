@@ -34,6 +34,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
     public event Action<int, string>? DesyncDetected;
     public event Action<int, SnapshotManifest>? CheckpointPublished;
+    public event Action? CatchUpIncomplete;
     public SpeedPolicy? CurrentPolicy => Volatile.Read(ref _currentPolicy);
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
@@ -494,7 +495,12 @@ public sealed class DedicatedClient : IAsyncDisposable
                         }
                         break;
                     case "CatchUpTruncated":
-                        Publish(session, () => StatusChanged?.Invoke("Catch-up history was truncated; restart the shared colony."));
+                        // The replay we can offer is incomplete; applying it would silently diverge, so say so.
+                        Publish(session, () =>
+                        {
+                            CatchUpIncomplete?.Invoke();
+                            StatusChanged?.Invoke("Catch-up history was truncated; the server needs a checkpoint.");
+                        });
                         break;
                     case "Commands":
                         if (message.Commands is null) throw new NetworkException("InvalidCommand", "The server sent an empty command batch.");

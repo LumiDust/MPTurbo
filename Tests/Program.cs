@@ -742,6 +742,30 @@ await Test("a late join keeps history commands that arrive after live ones", () 
     return Task.CompletedTask;
 });
 
+await Test("an overflowed history tells the joining peer it cannot catch up instead of replaying a hole", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("overflow"), MaxHistory: 2));
+    await server.StartAsync();
+    await using var host = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    var world = new byte[2048]; new Random(91).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    for (var i = 0; i < 5; i++) await host.SendCommandAsync("designation", System.Text.Encoding.UTF8.GetBytes($"Mine|0|{i}|{i}"));
+    await Until(() => server.HistoryTruncated, 10);
+    Check(server.HistoryTruncated, "history marks itself truncated");
+    await using var late = new DedicatedClient();
+    var incomplete = new TaskCompletionSource<bool>();
+    late.CatchUpIncomplete += () => incomplete.TrySetResult(true);
+    await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
+    Check(await incomplete.Task.WaitAsync(TimeSpan.FromSeconds(5)), "peer is warned, not silently diverged");
+    // A checkpoint makes the room joinable again.
+    await Task.Delay(200);
+    await host.CheckpointWorldAsync(
+        TurboTick.Networking.SnapshotBuilder.Describe(new byte[1024]), new MemoryStream(new byte[1024]), server.Tick);
+    Check(!server.HistoryTruncated && server.HistoryCount == 0, "checkpoint clears the truncation state");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();

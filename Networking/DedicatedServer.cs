@@ -48,7 +48,7 @@ public sealed class DedicatedServer : IAsyncDisposable
     public SnapshotManifest? CheckpointManifest => Volatile.Read(ref _checkpointManifest);
     private bool _historyTruncated;
     private int _seed;
-    private const int MaxHistory = 200_000;
+    private int MaxHistory => _options.MaxHistory;
     private int _commandsSincePersist;
     private readonly object _commandGate = new();
     private int _hashWindowFloor;
@@ -90,6 +90,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         if (options.Port is < 0 or > 65535) throw new ArgumentOutOfRangeException(nameof(options), "Port must be between 0 and 65535.");
         if (options.GameVersion != "1.7" && !Validation.IsFullGameVersion(options.GameVersion))
             throw new ArgumentException("GameVersion must be 1.7 or a complete 1.7.x version.", nameof(options));
+        if (options.MaxHistory is < 1 or > 5_000_000) throw new ArgumentOutOfRangeException(nameof(options), "MaxHistory must be between 1 and 5,000,000.");
         if (options.ModHash.Length > 512 || options.ModHash.Any(char.IsControl))
             throw new ArgumentException("ModHash must contain at most 512 printable characters.", nameof(options));
         _options = options with { DataDirectory = Path.GetFullPath(options.DataDirectory) };
