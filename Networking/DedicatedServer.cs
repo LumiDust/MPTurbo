@@ -454,6 +454,9 @@ public sealed class DedicatedServer : IAsyncDisposable
         finally { _stateGate.Release(); }
     }
 
+    private static readonly HashSet<string> KnownKinds =
+        new(StringComparer.Ordinal) { "designation", "blueprint", "draft", "order" };
+
     private Task RelayCommandAsync(Peer peer, WireMessage message)
     {
         if (!GameRunning || !peer.Joined) { peer.Queue(WireMessage.Error("NotPlaying", "The shared colony is not running.")); return Task.CompletedTask; }
@@ -461,6 +464,11 @@ public sealed class DedicatedServer : IAsyncDisposable
         if (command is null || string.IsNullOrWhiteSpace(command.Kind) || command.Kind.Length > 64 || command.Kind.Any(char.IsControl)
             || command.Payload is null || command.Payload.Length > 64 * 1024)
         { peer.Queue(WireMessage.Error("InvalidCommand", "The command kind or payload is invalid.")); return Task.CompletedTask; }
+        // Only the known action classes are relayed; a client cannot invent a new command the game won't understand.
+        if (!KnownKinds.Contains(command.Kind))
+        { peer.TryQueue(WireMessage.Error("UnknownCommand", "This command kind is not part of the shared action set.")); return Task.CompletedTask; }
+        if (!peer.TryConsumeCommandBudget())
+        { peer.TryQueue(WireMessage.Error("RateLimited", "Too many commands; the server is throttling this client.")); return Task.CompletedTask; }
         var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2, command.Kind, command.Payload);
         lock (_history)
         {
@@ -533,7 +541,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                 var tick = Interlocked.Increment(ref _tick);
                 if (tick % 6 != 0) continue;
                 foreach (var peer in _peers.Values)
-                    if (peer.Joined) peer.Queue(new WireMessage { Type = "Tick", Tick = tick });
+                    if (peer.Joined) peer.TryQueue(new WireMessage { Type = "Tick", Tick = tick });
             }
         }
         catch (Exception) { /* shutdown */ }
@@ -670,11 +678,26 @@ public sealed class DedicatedServer : IAsyncDisposable
         private int _closed;
         internal readonly long Id;
         internal readonly FramedConnection Connection;
-        internal readonly Channel<WireMessage> Outbound = Channel.CreateBounded<WireMessage>(new BoundedChannelOptions(128)
+        internal readonly Channel<WireMessage> Outbound = Channel.CreateBounded<WireMessage>(new BoundedChannelOptions(4096)
         { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait });
         internal readonly CancellationToken Token;
         internal volatile bool Joined;
         internal bool CanEdit;
+
+        // Simple sliding window: a client may issue at most 400 commands per second of wall clock.
+        private long _commandWindowStart = Environment.TickCount64;
+        private int _commandsInWindow;
+
+        internal bool TryConsumeCommandBudget()
+        {
+            var now = Environment.TickCount64;
+            if (now - _commandWindowStart >= 1000)
+            {
+                _commandWindowStart = now;
+                _commandsInWindow = 0;
+            }
+            return ++_commandsInWindow <= 400;
+        }
 
         internal Peer(long id, TcpClient socket, CancellationToken serverToken)
         {
@@ -688,6 +711,9 @@ public sealed class DedicatedServer : IAsyncDisposable
         {
             if (!Outbound.Writer.TryWrite(message)) Close();
         }
+
+        /// <summary>Advisory traffic (errors, ticks). Dropping it is preferable to killing the session.</summary>
+        internal void TryQueue(WireMessage message) => Outbound.Writer.TryWrite(message);
 
         internal void Close()
         {

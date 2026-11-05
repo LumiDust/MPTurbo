@@ -569,6 +569,34 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     Check(replay[0].Kind == "draft", "only the delta replays");
 });
 
+await Test("server rejects unknown command kinds and throttles a flooding client", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("guard")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient();
+    var errors = new List<string>();
+    host.StatusChanged += _ => { };
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    var world = new byte[2048]; new Random(41).NextBytes(world);
+    await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    await host.SendCommandAsync("invented", "x"u8.ToArray());
+    await Until(() => server.HistoryCount == 0);
+    Check(server.HistoryCount == 0, "unknown kind never reaches history");
+    await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
+    await Until(() => server.HistoryCount == 1);
+    Check(server.HistoryCount == 1, "known kind accepted");
+    var accepted = 1;
+    for (var i = 0; i < 500; i++)
+        await host.SendCommandAsync("designation", System.Text.Encoding.UTF8.GetBytes($"Mine|0|{i % 40}|{i % 40}"));
+    await Task.Delay(1500);
+    accepted = server.HistoryCount;
+    Check(accepted is > 1 and < 501, $"flood is bounded, stored {accepted}");
+    await host.SendCommandAsync("designation", "Mine|0|9|9"u8.ToArray());
+    await Until(() => server.HistoryCount > accepted);
+    Check(server.HistoryCount > accepted, "client recovers after the window");
+});
+
 await Test("1.7 package: own assemblies only, zero reference-mod dependencies, complete translations", () =>
 {
     PackageValidation.Validate();
