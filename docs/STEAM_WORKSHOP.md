@@ -1,6 +1,6 @@
 # Steam 创意工坊发布
 
-TurboTick 面向 **RimWorld 1.7**，游戏 AppID 为 **294100**。当前为 **0.3.0 开发原型**，先做私密或好友测试。本指南不执行 Steam 上传。
+TurboTick 面向 **RimWorld 1.7**，游戏 AppID 为 **294100**。当前为 **0.4.0 版本**。本指南不执行 Steam 上传。
 
 ## 1. 构建并准备上传目录
 
@@ -22,7 +22,7 @@ pwsh scripts/prepare-workshop.ps1 -OutputDirectory "<游戏目录>/Mods/TurboTic
 ## 2. 核对发布材料
 
 - 名称：`TurboTick`；固定 packageId：`yg.turbotick`。
-- [About.xml](../About/About.xml) 声明版本 `0.3.0`、游戏版本 `1.7`、唯一依赖 Harmony；版本号与 [Directory.Build.props](https://github.com/LumiDust/TurboTick/blob/main/Directory.Build.props) 一致。
+- [About.xml](../About/About.xml) 声明版本 `0.4.0`、游戏版本 `1.7`、唯一依赖 Harmony；版本号与 [Directory.Build.props](https://github.com/LumiDust/TurboTick/blob/main/Directory.Build.props) 一致。
 - [LoadFolders.xml](../LoadFolders.xml) 加载根目录和 `1.7/`；三个自有 DLL 位于 `1.7/Assemblies/`。
 - 预览图 [Preview.png](../About/Preview.png) 已提供：640×360 PNG；图标 [ModIcon.png](../About/ModIcon.png) 为 64×64。
 - 本项目采用“预览图小于 1 MB”的保守标准。640×360 是项目推荐尺寸，不声明为 Steam 官方强制像素。

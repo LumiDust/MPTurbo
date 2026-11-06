@@ -5,23 +5,31 @@ namespace TurboTick.Networking;
 /// <summary>Values shared by this standalone protocol, with no game assembly dependencies.</summary>
 public static class NetworkProtocol
 {
-    public const int Version = 1;
-    public const string ClientVersion = "0.3.0";
+    public const int Version = 2;
+    public const string ClientVersion = "0.4.0";
     public const int MaximumFrameLength = 4 * 1024 * 1024;
     public const int SnapshotChunkSize = 256 * 1024;
 }
 
-/// <summary>Server-authoritative simulation rate settings. Revision zero is the initial policy.
-/// Rate sync is on by default; joining a room applies the server value to everyone.</summary>
-public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, float MaxRate = 60f, long Revision = 0)
+/// <summary>Server-authoritative native time selection. Joining a room applies it by default.
+/// Revision zero is the initial policy; legacy extra-rate fields remain for persisted-data compatibility.</summary>
+public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, float MaxRate = 60f, long Revision = 0,
+    int TimeSpeed = 1)
 {
     private float _multiplier = ValidateMultiplier(Multiplier);
     private float _maxRate = ValidateMaxRate(MaxRate);
     private long _revision = ValidateRevision(Revision);
+    private int _timeSpeed = ValidateTimeSpeed(TimeSpeed);
 
     public float Multiplier { get => _multiplier; init => _multiplier = ValidateMultiplier(value); }
     public float MaxRate { get => _maxRate; init => _maxRate = ValidateMaxRate(value); }
     public long Revision { get => _revision; init => _revision = ValidateRevision(value); }
+    /// <summary>Native Verse.TimeSpeed: 0 paused, 1 normal, 2 fast, 3 superfast, 4 developer ultrafast.
+    /// Legacy extra-multiplier fields remain readable for older server state files; the game UI uses this value.</summary>
+    public int TimeSpeed { get => _timeSpeed; init => _timeSpeed = ValidateTimeSpeed(value); }
+
+    public static int ValidateTimeSpeed(int value) => value is >= 0 and <= 4
+        ? value : throw new ArgumentOutOfRangeException(nameof(TimeSpeed), "Native time speed must be between 0 and 4.");
 
     private static float ValidateMultiplier(float value) => float.IsFinite(value) && value is >= 1f and <= 20f
         ? value : throw new ArgumentOutOfRangeException(nameof(Multiplier), "Multiplier must be finite and between 1 and 20.");
@@ -32,7 +40,7 @@ public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, flo
 }
 
 public sealed record ModFingerprint(string PackageId, string ContentHash);
-public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = "0.3.0");
+public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = "0.4.0");
 
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
 public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0);

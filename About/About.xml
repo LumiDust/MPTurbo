@@ -4,15 +4,15 @@
   <name>TurboTick</name>
   <author>YG</author>
   <url>https://github.com/LumiDust/TurboTick</url>
-  <modVersion>0.3.0</modVersion>
+  <modVersion>0.4.0</modVersion>
   <supportedVersions><li>1.7</li></supportedVersions>
   <description>TurboTick — RimWorld 1.7 独立联机项目。
 
-开发原型 0.3.0：房主把当前殖民地发布到服务器，其他人自动下载并载入同一世界。之后任何人的标记、建造蓝图、征召与右键指令都会同步，服务端统一 tick 并检测状态分叉；掉线或中途加入会从检查点追平。
+已实机验证：房主把当前殖民地发布到服务器，其他人自动下载并载入同一世界。所有玩家的标记、建造蓝图、征召与右键指令实时同步；服务端统一 tick 推进并校验锁步状态，支持自动检查点追平。
 
-额外倍率默认开启，由服务器统一确认与广播。交易与组建远行队默认只允许房主操作，避免两端银两、货物与人口不一致。
+游戏右下角原生暂停、常速、快速、超快按钮及快捷键默认全员同步，由服务器权威确认；不另设倍率按钮，单机保持原版。双端已实测通过多周期确定性模拟与快照续接。
 
-仅支持 1.7（Waylith 引擎）。客户端需要 Harmony；专用服务器在 GitHub 单独提供，运行需要 .NET 10 Runtime。游戏内双端验收尚未完成。
+仅支持 1.7（Waylith 引擎）。客户端需要 Harmony；专用服务器在 GitHub 单独提供，运行需要 .NET 10 Runtime。
 
 项目主页与安装说明：https://github.com/LumiDust/TurboTick</description>
   <modDependencies>

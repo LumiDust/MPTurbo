@@ -176,7 +176,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                 ?? throw new InvalidDataException("The persisted server state is empty.");
         var policy = saved?.Policy ?? new SpeedPolicy();
         // Reconstructing also validates a persisted policy before any socket is opened.
-        policy = new SpeedPolicy(policy.Enabled, policy.Multiplier, policy.MaxRate, policy.Revision);
+        policy = new SpeedPolicy(policy.Enabled, policy.Multiplier, policy.MaxRate, policy.Revision, policy.TimeSpeed);
         var version = _options.GameVersion == "1.7" ? saved?.GameVersion : _options.GameVersion;
         var modHash = _options.ModHash == "development" ? saved?.ModHash : _options.ModHash;
         if (version is not null && !Validation.IsFullGameVersion(version))
@@ -325,6 +325,10 @@ public sealed class DedicatedServer : IAsyncDisposable
                 RequireRequestId(message);
                 await SetSpeedAsync(peer, message).ConfigureAwait(false);
                 return;
+            case "SetTimeSpeed":
+                RequireRequestId(message);
+                await SetTimeSpeedAsync(peer, message).ConfigureAwait(false);
+                return;
             case "GetSnapshotManifest":
                 RequireRequestId(message);
                 try
@@ -427,7 +431,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             peer.Queue(WireMessage.Error("NotCheckpointOwner", "Only the checkpoint owner may publish checkpoints.", message.RequestId));
             return;
         }
-        if (!GameRunning || message.Tick <= 0 || message.Tick > Tick)
+        if (!GameRunning || message.Tick < 0 || message.Tick > Tick)
         {
             peer.Queue(WireMessage.Error("InvalidCheckpoint", "The checkpoint tick must be inside the running session.", message.RequestId));
             return;
@@ -492,7 +496,12 @@ public sealed class DedicatedServer : IAsyncDisposable
     }
 
     private static readonly HashSet<string> KnownKinds =
-        new(StringComparer.Ordinal) { "designation", "blueprint", "draft", "order", "transport" };
+        new(StringComparer.Ordinal)
+        {
+            "designation", "remove-designation", "blueprint", "cancel-thing",
+            "draft", "order", "transport", "forbid", "priority",
+            "zone-cell", "zone-delete", "bill-add", "bill-delete", "area-assign"
+        };
 
     private Task RelayCommandAsync(Peer peer, WireMessage message)
     {
@@ -641,12 +650,21 @@ public sealed class DedicatedServer : IAsyncDisposable
         try
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(16));
+            var clock = new NativeTickClock();
+            var previous = System.Diagnostics.Stopwatch.GetTimestamp();
+            var lastBroadcast = -1;
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
+                var now = System.Diagnostics.Stopwatch.GetTimestamp();
+                var elapsed = (now - previous) / (double)System.Diagnostics.Stopwatch.Frequency;
+                previous = now;
                 if (!GameRunning) continue;
                 ExpirePendingJoiners();
-                var tick = Interlocked.Increment(ref _tick);
-                if (tick % 6 != 0) continue;
+                var count = clock.Advance(elapsed, CurrentPolicy.TimeSpeed);
+                var tick = count == 0 ? Tick : Interlocked.Add(ref _tick, count);
+                // Keep paused clients alive at the same watermark. Zero speed publishes no simulation debt.
+                if (tick - lastBroadcast < 6 && count != 0) continue;
+                lastBroadcast = tick;
                 foreach (var peer in _peers.Values)
                     if (peer.Joined) peer.TryQueue(new WireMessage { Type = "Tick", Tick = tick });
             }
@@ -680,7 +698,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                 peer.Queue(WireMessage.Error("RevisionExhausted", "The policy revision has reached its maximum value.", message.RequestId));
                 return;
             }
-            var policy = request with { Revision = _policy.Revision + 1 };
+            var policy = request with { Revision = _policy.Revision + 1, TimeSpeed = _policy.TimeSpeed };
             try
             {
                 await SaveStateAsync(policy, _lockedGameVersion, _lockedModHash, _run!.Token).ConfigureAwait(false);
@@ -694,6 +712,42 @@ public sealed class DedicatedServer : IAsyncDisposable
             foreach (var recipient in _peers.Values)
                 if (recipient.Joined)
                     recipient.Queue(new WireMessage { Type = "Policy", Policy = policy, RequestId = recipient.Id == peer.Id ? message.RequestId : 0 });
+        }
+        finally { _stateGate.Release(); }
+    }
+
+    private async Task SetTimeSpeedAsync(Peer peer, WireMessage message)
+    {
+        if (message.TimeSpeed is not { } speed || speed is < 0 or > 4)
+        {
+            peer.Queue(WireMessage.Error("InvalidTimeSpeed", "Native time speed must be 0..4.", message.RequestId));
+            return;
+        }
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+        try
+        {
+            if (!peer.CanEdit)
+            {
+                peer.Queue(WireMessage.Error("ControllerOnly", "Only the controller may change native time speed.", message.RequestId));
+                return;
+            }
+            if (_policy.Revision == long.MaxValue)
+            {
+                peer.Queue(WireMessage.Error("RevisionExhausted", "The policy revision has reached its maximum value.", message.RequestId));
+                return;
+            }
+            var policy = _policy with { TimeSpeed = speed, Revision = _policy.Revision + 1 };
+            try { await SaveStateAsync(policy, _lockedGameVersion, _lockedModHash, _run!.Token).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                peer.Queue(WireMessage.Error("PersistenceFailed", "The previous native speed remains active.", message.RequestId));
+                return;
+            }
+            Volatile.Write(ref _policy, policy);
+            foreach (var recipient in _peers.Values)
+                if (recipient.Joined)
+                    recipient.Queue(new WireMessage { Type = "Policy", Policy = policy,
+                        RequestId = recipient.Id == peer.Id ? message.RequestId : 0 });
         }
         finally { _stateGate.Release(); }
     }
@@ -730,7 +784,13 @@ public sealed class DedicatedServer : IAsyncDisposable
     }
 
     private Task SaveStateAsync(SpeedPolicy policy, string? version, string? modHash, CancellationToken ct) =>
-        AtomicFile.WriteJsonAsync(_statePath, new SavedState(policy, version, modHash), ct);
+        AtomicFile.WriteJsonAsync(_statePath, CaptureState(policy, version, modHash), ct);
+
+    private SavedState CaptureState(SpeedPolicy policy, string? version, string? modHash)
+    {
+        lock (_history)
+            return new SavedState(policy, version, modHash, Session, [.. _history], _historyTruncated, WorldManifest);
+    }
 
     /// <summary>Persists the running session so a restart resumes the same epoch, tick and history.</summary>
     private Task PersistSessionAsync(CancellationToken ct)

@@ -7,7 +7,6 @@
   <TurboTick_Connect>连接／重连</TurboTick_Connect>
   <TurboTick_Disconnect>退出房间</TurboTick_Disconnect>
   <TurboTick_Fingerprint>兼容指纹：{0}</TurboTick_Fingerprint>
-  <TurboTick_Enable>启用额外倍率（默认关闭）</TurboTick_Enable>
   <TurboTick_EnableDesc>房间内的启用开关、倍率与速率上限一起交由服务端确认；单机设置留在本地。</TurboTick_EnableDesc>
   <TurboTick_Multiplier>额外倍率：×{0}</TurboTick_Multiplier>
   <TurboTick_MaxRateCap>总速率上限：{0}x</TurboTick_MaxRateCap>
@@ -35,4 +34,11 @@
   <TurboTick_ExperimentalDesc>把装舱操作同步给其他人。尚未在实机验证，默认关闭；出问题请关掉它。</TurboTick_ExperimentalDesc>
   <TurboTick_EveryoneTrades>允许所有人交易/组建远行队（不同步）</TurboTick_EveryoneTrades>
   <TurboTick_EveryoneTradesDesc>默认只有房主能进行交易与组建远行队，避免两端银两、货物与人口不一致。开启后各自操作，可能造成分叉。</TurboTick_EveryoneTradesDesc>
+  <TurboTick_NativeControls>连接房间后，游戏右下角原生暂停、常速、快速、超快按钮及对应快捷键默认全员同步；一人操作，服务端确认后生效。单机沿用原版速度。</TurboTick_NativeControls>
+  <TurboTick_NativeHud>TurboTick · {0} · r{1}</TurboTick_NativeHud>
+  <TurboTick_NativePaused>暂停</TurboTick_NativePaused>
+  <TurboTick_NativeNormal>常速</TurboTick_NativeNormal>
+  <TurboTick_NativeFast>快速</TurboTick_NativeFast>
+  <TurboTick_NativeSuperfast>超快</TurboTick_NativeSuperfast>
+  <TurboTick_NativeUltrafast>开发极速</TurboTick_NativeUltrafast>
 </LanguageData>

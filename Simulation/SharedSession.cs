@@ -114,6 +114,7 @@ public sealed class SharedSession
 {
     public SharedPhase Phase { get; private set; } = SharedPhase.Offline;
     public long Epoch { get; private set; } = -1;
+    public long LoadGeneration { get; private set; }
     public string? WorldId { get; private set; }
     public TickBarrier Barrier { get; } = new();
     public CommandLog Commands { get; } = new();
@@ -134,6 +135,14 @@ public sealed class SharedSession
 
     public void Playing() => Phase = SharedPhase.Playing;
 
+    /// <summary>A delayed loader callback only completes the load it originally belonged to.</summary>
+    public bool TryFinishLoading(long generation)
+    {
+        if (generation != LoadGeneration || Phase != SharedPhase.Synchronizing) return false;
+        Phase = SharedPhase.Playing;
+        return true;
+    }
+
     public void Fault(string error)
     {
         LastError = error;
@@ -149,6 +158,7 @@ public sealed class SharedSession
 
     private void Reset()
     {
+        ++LoadGeneration;
         Epoch = -1;
         WorldId = null;
         LastError = "";

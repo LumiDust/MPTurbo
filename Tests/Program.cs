@@ -395,6 +395,17 @@ await Test("action codec round-trips every player action and rejects malformed p
     var order = TurboTick.Simulation.CommandCodec.OrderCommand(42, "HaulToCell", 1000, -1, -1, 77, 10, 11);
     Check(TurboTick.Simulation.CommandCodec.TryDecodeOrder(order.Payload, out var op, out var job, out var ac, out var at, out var bc, out var bt, out var count)
         && op == 42 && job == "HaulToCell" && ac == 1000 && at == -1 && bt == 77 && count == 10, "order");
+    var forbid = TurboTick.Simulation.CommandCodec.ForbidCommand(1234, true, 12);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeForbid(forbid.Payload, out var ft, out var fb) && ft == 1234 && fb, "forbid");
+    var prio = TurboTick.Simulation.CommandCodec.PriorityCommand(42, "Doctor", 1, 13);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodePriority(prio.Payload, out var pp, out var pw, out var pv) && pp == 42 && pw == "Doctor" && pv == 1, "priority");
+    var zone = TurboTick.Simulation.CommandCodec.ZoneCellCommand("stockpile", 5, 0, 10, 20, true, 14);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeZoneCell(zone.Payload, out var zt, out var zi, out var zm, out var zx, out var zz, out var za)
+        && zt == "stockpile" && zi == 5 && zm == 0 && zx == 10 && zz == 20 && za, "zone cell");
+    var bill = TurboTick.Simulation.CommandCodec.BillAddCommand(555, "CookMealSimple", 10, 15);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeBillAdd(bill.Payload, out var bb, out var br, out var bc2) && bb == 555 && br == "CookMealSimple" && bc2 == 10, "bill add");
+    var area = TurboTick.Simulation.CommandCodec.AreaAssignCommand(42, 2, 16);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeAreaAssign(area.Payload, out var ap, out var aa) && ap == 42 && aa == 2, "area assign");
     Check(!TurboTick.Simulation.CommandCodec.TryDecodeDesignation("broken"u8.ToArray(), out _, out _, out _, out _), "reject short payload");
     Check(!TurboTick.Simulation.CommandCodec.TryDecodeDraft("1|2"u8.ToArray(), out _, out _), "reject invalid flag");
     return Task.CompletedTask;
@@ -441,7 +452,6 @@ await Test("a peer joining mid-session receives the epoch, tick and full command
     var world = new byte[8192]; new Random(11).NextBytes(world);
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
-    AutoCheckpoint(host, server);
     await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
     await Until(() => server.HistoryCount == 1);
     await using var late = new DedicatedClient();
@@ -944,6 +954,173 @@ await Test("colony-wide actions are limited to the host unless explicitly loosen
     Check(TurboTick.Simulation.InteractionPolicy.CanRunColonyWideAction(true, false, true), "override allows guests");
     Check(TurboTick.Simulation.InteractionPolicy.DeniedMessage("交易").Contains("交易"), "message names the action");
     _ = policy;
+    return Task.CompletedTask;
+});
+
+await Test("native speed: bidirectional selection, pause, late join and restart retain the same policy", async () =>
+{
+    var directory = Dir("native-speed");
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: directory));
+    await server.StartAsync();
+    await using var a = new DedicatedClient();
+    await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("A"));
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
+    Check(a.CurrentPolicy?.TimeSpeed == 1 && b.CurrentPolicy?.TimeSpeed == 1, "normal by default");
+    await a.SetTimeSpeedAsync(3);
+    await Until(() => b.CurrentPolicy?.TimeSpeed == 3);
+    Check(a.CurrentPolicy == b.CurrentPolicy, "same confirmed native selection");
+    await b.SetTimeSpeedAsync(0);
+    await Until(() => a.CurrentPolicy?.TimeSpeed == 0);
+    var pausedRevision = a.CurrentPolicy!.Revision;
+    await using var late = new DedicatedClient();
+    await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
+    Check(late.CurrentPolicy?.TimeSpeed == 0 && late.CurrentPolicy.Revision == pausedRevision, "late join stays paused");
+    // A legacy policy edit must never overwrite the native selection.
+    await a.SetSpeedAsync(true, 2, 60);
+    Check(a.CurrentPolicy?.TimeSpeed == 0, "legacy update preserves pause");
+    await a.DisconnectAsync(); await b.DisconnectAsync(); await late.DisconnectAsync();
+    await server.StopAsync();
+    await using var restarted = new DedicatedServer(new(Port: 0, DataDirectory: directory));
+    await restarted.StartAsync();
+    await a.ConnectAsync("127.0.0.1", restarted.Port, Hello("A"));
+    Check(a.CurrentPolicy?.TimeSpeed == 0, "restart retains native pause");
+    await a.SetTimeSpeedAsync(2);
+    Check(a.CurrentPolicy?.TimeSpeed == 2, "resume to native fast");
+});
+
+await Test("native speed: controller-only permissions and invalid values leave room unchanged", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("native-role"), EveryoneCanEdit: false));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("A"));
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
+    var original = server.CurrentPolicy;
+    await Throws(() => b.SetTimeSpeedAsync(0), "ControllerOnly");
+    await Throws(() => a.SetTimeSpeedAsync(-1));
+    await Throws(() => a.SetTimeSpeedAsync(5));
+    Check(server.CurrentPolicy == original && b.IsConnected, "permission/validation do not mutate or disconnect");
+    await a.SetTimeSpeedAsync(4);
+    await Until(() => b.CurrentPolicy?.TimeSpeed == 4);
+});
+
+await Test("native speed: ordered rapid presses use one authoritative revision stream", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("native-rapid")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("A"));
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
+    var observed = new System.Collections.Concurrent.ConcurrentQueue<SpeedPolicy>();
+    b.PolicyChanged += observed.Enqueue;
+    int[] choices = [2, 3, 0, 1, 3, 2, 0];
+    var requests = choices.Select(speed => a.SetTimeSpeedAsync(speed)).ToArray();
+    await Task.WhenAll(requests);
+    await Until(() => b.CurrentPolicy?.Revision == choices.Length);
+    Check(a.CurrentPolicy == b.CurrentPolicy && b.CurrentPolicy!.TimeSpeed == choices[^1], "last key wins in order");
+    var changes = observed.Where(policy => policy.Revision > 0).ToArray();
+    await Until(() => observed.Count(policy => policy.Revision > 0) == choices.Length);
+    changes = observed.Where(policy => policy.Revision > 0).ToArray();
+    Check(changes.Select(policy => policy.TimeSpeed).SequenceEqual(choices), "no reordered key presses");
+});
+
+await Test("native clock: native rates, pause without debt, and running server holds its tick", async () =>
+{
+    foreach (var (speed, expected) in new[] { (0, 0), (1, 60), (2, 180), (3, 360), (4, 900) })
+    {
+        var clock = new NativeTickClock();
+        var count = Enumerable.Range(0, 100).Sum(_ => clock.Advance(0.01, speed));
+        Check(count == expected, $"native speed {speed}: {count}");
+    }
+    var pauseClock = new NativeTickClock();
+    Check(pauseClock.Advance(120, 0) == 0 && pauseClock.Advance(1d / 60, 1) == 1, "no paused time debt");
+    var directory = Dir("native-clock");
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: directory));
+    await server.StartAsync();
+    await using var host = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
+    byte[] world = [1, 2, 3];
+    await host.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await host.StartGameAsync();
+    await Until(() => server.Tick >= 6);
+    await host.SetTimeSpeedAsync(0);
+    await Task.Delay(100); // settle the in-flight timer callback before measuring the hold
+    var held = server.Tick;
+    await Task.Delay(250);
+    Check(server.Tick == held && server.GameRunning, "pause holds running-session tick");
+    await host.SetTimeSpeedAsync(3);
+    await Until(() => server.Tick > held);
+    await host.SetTimeSpeedAsync(0);
+    await server.StopAsync();
+    await using var restarted = new DedicatedServer(new(Port: 0, DataDirectory: directory));
+    await restarted.StartAsync();
+    Check(restarted.GameRunning && restarted.CurrentPolicy.TimeSpeed == 0 && restarted.WorldManifest is not null,
+        "changing native speed preserves the running world across restart");
+});
+
+await Test("per-tick permits stop the actual engine call when a native frame exhausts its watermark", () =>
+{
+    var barrier = new TickBarrier();
+    var guard = new SimulationTickGuard(barrier);
+    var gameTick = 150_000;
+    barrier.Publish(1);
+    var calls = 0;
+    // A native low-FPS frame attempts two ticks; additional catch-up calls hit the same guard.
+    for (var attempt = 0; attempt < 10; attempt++)
+    {
+        if (!guard.TryBegin(gameTick, out var permit)) continue;
+        gameTick++; calls++;
+        Check(guard.Complete(permit, gameTick), "completed engine tick commits once");
+    }
+    Check(calls == 1 && gameTick == 150_001 && barrier.AppliedTick == 1, "no physical-only extra ticks");
+    barrier.Publish(4);
+    for (var attempt = 0; attempt < 10; attempt++)
+    {
+        if (!guard.TryBegin(gameTick, out var permit)) continue;
+        Check(!guard.TryBegin(gameTick, out _), "recursive tick denied before outer tick completes");
+        gameTick++;
+        Check(guard.Complete(permit, gameTick), "catch-up and native loops share permits");
+    }
+    Check(gameTick == 150_004 && barrier.AppliedTick == 4, "the snapshot offset stays constant");
+    return Task.CompletedTask;
+});
+
+await Test("failed, skipped and debug-jumped engine ticks never count as successful shared ticks", () =>
+{
+    var barrier = new TickBarrier(); barrier.Publish(3);
+    var guard = new SimulationTickGuard(barrier);
+    Check(guard.TryBegin(100, out var cancelled), "acquire before potential exception");
+    guard.Cancel();
+    Check(!guard.Complete(cancelled, 101) && barrier.AppliedTick == 0, "cancelled tick cannot later commit");
+    Check(guard.TryBegin(100, out var skipped), "acquire before another Harmony prefix skips");
+    Check(!guard.Complete(skipped, 100) && barrier.AppliedTick == 0, "skipped original is not a tick");
+    Check(guard.TryBegin(100, out var jumped), "acquire before debug time jump");
+    Check(!guard.Complete(jumped, 2100) && barrier.AppliedTick == 0, "fast ecology jump is not one tick");
+    Check(guard.TryBegin(100, out var good), "guard is released");
+    Check(guard.Complete(good, 101) && !guard.Complete(good, 101), "complete exactly once");
+    return Task.CompletedTask;
+});
+
+await Test("load completion is tied to one generation and cannot revive a failed or superseded world", () =>
+{
+    var session = new SharedSession();
+    session.BeginLoading(1, "world-A");
+    var first = session.LoadGeneration;
+    Check(!session.TryFinishLoading(first), "a constructor/loading phase is not a completed load");
+    session.WorldLoaded();
+    session.BeginLoading(2, "world-B");
+    var second = session.LoadGeneration;
+    session.WorldLoaded();
+    Check(!session.TryFinishLoading(first), "late world-A callback cannot complete world-B");
+    session.Fault("read failed");
+    Check(!session.TryFinishLoading(second), "late callback cannot revive a failure");
+    session.BeginLoading(2, "world-B");
+    session.WorldLoaded();
+    Check(session.TryFinishLoading(session.LoadGeneration), "only the current finalized load enters play");
+    Check(!session.TryFinishLoading(session.LoadGeneration), "one ready transition per load");
+    session.Leave();
+    Check(!session.TryFinishLoading(second), "leaving invalidates old tickets");
     return Task.CompletedTask;
 });
 

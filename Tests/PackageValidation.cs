@@ -67,6 +67,8 @@ static class PackageValidation
         }
         var chinese = XDocument.Load(Path.Combine(root, "Languages", "ChineseSimplified", "Keyed", "TurboTick.xml"));
         var english = XDocument.Load(Path.Combine(root, "Languages", "English", "Keyed", "TurboTick.xml"));
+        Require(chinese.Root!.Elements().GroupBy(x => x.Name.LocalName).All(g => g.Count() == 1)
+             && english.Root!.Elements().GroupBy(x => x.Name.LocalName).All(g => g.Count() == 1), "duplicate translation keys");
         var keys = chinese.Root!.Elements().Select(x => x.Name.LocalName).ToHashSet();
         Require(keys.SetEquals(english.Root!.Elements().Select(x => x.Name.LocalName)), "translation key parity");
         var sources = string.Join("\n", Directory.EnumerateFiles(Path.Combine(root, "Source"), "*.cs").Select(File.ReadAllText));

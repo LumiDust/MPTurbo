@@ -65,7 +65,7 @@ try
         using (var raw = new TcpClient())
         {
             await raw.ConnectAsync(IPAddress.Loopback, port);
-            await WriteFrame(raw.GetStream(), JsonSerializer.Serialize(new { type = "Hello", protocolVersion = 1, hello = Hello() with { ClientVersion = "9.0.0" } }));
+            await WriteFrame(raw.GetStream(), JsonSerializer.Serialize(new { type = "Hello", protocolVersion = NetworkProtocol.Version, hello = Hello() with { ClientVersion = "9.0.0" } }));
             var error = await ReadFrame(raw.GetStream());
             Assert(error.GetProperty("code").GetString() == "ClientVersionMismatch", "Client version mismatch was not checked.");
         }
@@ -193,7 +193,7 @@ try
             await ReadFrame(socket.GetStream());
             await WriteFrame(socket.GetStream(), JsonSerializer.Serialize(new
             {
-                type = "Welcome", protocolVersion = 1, clientVersion = NetworkProtocol.ClientVersion,
+                type = "Welcome", protocolVersion = NetworkProtocol.Version, clientVersion = NetworkProtocol.ClientVersion,
                 gameVersion = "1.7.4910", modHash = "test-hash", canEdit = true, policy = new SpeedPolicy()
             }));
             await ReadFrame(socket.GetStream());
@@ -235,7 +235,7 @@ try
             await ReadFrame(socket.GetStream());
             await WriteFrame(socket.GetStream(), JsonSerializer.Serialize(new
             {
-                type = "Welcome", protocolVersion = 1, clientVersion = NetworkProtocol.ClientVersion,
+                type = "Welcome", protocolVersion = NetworkProtocol.Version, clientVersion = NetworkProtocol.ClientVersion,
                 gameVersion = "1.7.4910", modHash = "test-hash", canEdit = true, policy = new SpeedPolicy()
             }));
             await ReadFrame(socket.GetStream());
@@ -360,12 +360,12 @@ try
     {
         using var slow = new TcpClient { ReceiveBufferSize = 1024 };
         await slow.ConnectAsync(IPAddress.Loopback, port);
-        await WriteFrame(slow.GetStream(), JsonSerializer.Serialize(new { type = "Hello", protocolVersion = 1, hello = Hello() }));
+        await WriteFrame(slow.GetStream(), JsonSerializer.Serialize(new { type = "Hello", protocolVersion = NetworkProtocol.Version, hello = Hello() }));
         await ReadFrame(slow.GetStream());
         var latest = (await server.Snapshots.GetLatestAsync())!;
         for (var index = 1; index <= 64; index++)
             await WriteFrame(slow.GetStream(), JsonSerializer.Serialize(new
-            { type = "GetSnapshotChunk", protocolVersion = 1, requestId = index, snapshotId = latest.Id, chunkIndex = 0 }));
+            { type = "GetSnapshotChunk", protocolVersion = NetworkProtocol.Version, requestId = index, snapshotId = latest.Id, chunkIndex = 0 }));
         using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
             await slow.GetStream().ReadExactlyAsync(new byte[1], deadline.Token);
         await Task.Delay(100);
@@ -422,7 +422,7 @@ static async Task VerifyHeartbeat(int port)
 {
     using var peer = new TcpClient();
     await peer.ConnectAsync(IPAddress.Loopback, port);
-    await WriteFrame(peer.GetStream(), JsonSerializer.Serialize(new { type = "Hello", protocolVersion = 1, hello = Hello() }));
+    await WriteFrame(peer.GetStream(), JsonSerializer.Serialize(new { type = "Hello", protocolVersion = NetworkProtocol.Version, hello = Hello() }));
     await ReadFrame(peer.GetStream());
     var started = Environment.TickCount64;
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(28));

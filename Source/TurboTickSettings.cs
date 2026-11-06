@@ -22,11 +22,6 @@ public class TurboTickSettings : ModSettings
     public string PlayerName = "Player";
     /// <summary>Developer aid: join the configured server as soon as a colony is loaded.</summary>
     public bool autoConnect = false;
-    private float draftMultiplier = 2f;
-    private float draftCap = 60f;
-    private bool draftEnabled;
-    private long draftRevision = -1;
-    private bool wasRoom;
 
     public override void ExposeData()
     {
@@ -48,7 +43,6 @@ public class TurboTickSettings : ModSettings
         var listing = new Listing_Standard();
         listing.Begin(area);
         listing.Label(T("TurboTick_Prototype"), 48f);
-        bool room = TurboState.Authority.SessionRequested;
         ServerHost = Field(listing, T("TurboTick_Host"), ServerHost);
         ServerPort = Field(listing, T("TurboTick_Port"), ServerPort);
         PlayerName = Field(listing, T("TurboTick_Player"), PlayerName);
@@ -61,24 +55,7 @@ public class TurboTickSettings : ModSettings
         listing.Label(T("TurboTick_Fingerprint", RoomConnection.Fingerprint), 38f);
         listing.Gap(6f);
 
-        var policy = TurboState.Authority.Current;
-        if (draftRevision != policy.Revision || wasRoom != room)
-        {
-            draftRevision = policy.Revision;
-            wasRoom = room;
-            draftMultiplier = policy.Multiplier;
-            draftCap = policy.MaxRate;
-            draftEnabled = policy.Enabled;
-        }
-        listing.CheckboxLabeled(T("TurboTick_Enable"), ref draftEnabled, T("TurboTick_EnableDesc"));
-        listing.Label(T("TurboTick_Multiplier", draftMultiplier.ToString("0.0")), 24f);
-        draftMultiplier = (float)Math.Round(listing.Slider(draftMultiplier, 1f, 20f), 1);
-        listing.Label(T("TurboTick_MaxRateCap", draftCap.ToString("0")), 24f);
-        draftCap = (float)Math.Round(listing.Slider(draftCap, 1f, 240f));
-        var apply = listing.GetRect(30f);
-        if (Widgets.ButtonText(new Rect(apply.x, apply.y, 270f, 28f),
-                room ? T("TurboTick_ApplyRoom") : T("TurboTick_ApplyLocal"), true, true, RoomConnection.CanEdit))
-            TurboState.Request(draftEnabled, draftMultiplier, draftCap);
+        listing.Label(T("TurboTick_NativeControls"), 54f);
         listing.CheckboxLabeled(T("TurboTick_ShowHud"), ref showHud, T("TurboTick_ShowHudDesc"));
         listing.CheckboxLabeled(T("TurboTick_AutoRecover"), ref autoRecover, T("TurboTick_AutoRecoverDesc"));
         listing.CheckboxLabeled(T("TurboTick_Experimental"), ref experimentalInteractions, T("TurboTick_ExperimentalDesc"));

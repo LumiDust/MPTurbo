@@ -19,22 +19,81 @@ public static class PatchInstaller
     public static void InstallAll(Harmony harmony)
     {
         status.Clear();
+        try { SimulationRandom.Validate(); status["simulation-rng"] = true; }
+        catch (Exception error) { status["simulation-rng"] = false; Log.Warning("[TurboTick] RNG adapter: " + error.Message); }
+        try { TurboEnvironmentState.ValidateBindings(); status["environment-state"] = true; }
+        catch (Exception error) { status["environment-state"] = false; Log.Warning("[TurboTick] Environment adapter: " + error.Message); }
+        try { TurboPawnPathState.ValidateBindings(); status["pawn-path-state"] = true; }
+        catch (Exception error) { status["pawn-path-state"] = false; Log.Warning("[TurboTick] Pawn path adapter: " + error.Message); }
         Try(harmony, "designation", typeof(DesignationCapturePatch));
+        Try(harmony, "designation-remove", typeof(DesignationRemoveCapturePatch));
         Try(harmony, "blueprint", typeof(BlueprintCapturePatch));
+        Try(harmony, "blueprint-cancel", typeof(BlueprintCancelCapturePatch));
+        Try(harmony, "frame-cancel", typeof(FrameCancelCapturePatch));
         Try(harmony, "draft", typeof(DraftCapturePatch));
         Try(harmony, "order", typeof(OrderCapturePatch));
+        Try(harmony, "forbid", typeof(ForbidCapturePatch));
+        Try(harmony, "priority", typeof(PriorityCapturePatch));
+        Try(harmony, "zone-add", typeof(ZoneAddCellCapturePatch));
+        Try(harmony, "zone-remove", typeof(ZoneRemoveCellCapturePatch));
+        Try(harmony, "zone-delete", typeof(ZoneDeleteCapturePatch));
+        Try(harmony, "bill-add", typeof(BillAddCapturePatch));
+        Try(harmony, "bill-delete", typeof(BillDeleteCapturePatch));
+        Try(harmony, "area-assign", typeof(AreaAssignCapturePatch));
         Try(harmony, "transport", typeof(TransportCapturePatch));
         Try(harmony, "tradeguard", typeof(TradeGuardPatch));
         Try(harmony, "caravanguard", typeof(CaravanGuardPatch));
         Try(harmony, "gate", typeof(TickGatePatch));
         Try(harmony, "apply", typeof(TickApplyPatch));
+        Try(harmony, "shared-snapshot-ids", typeof(SharedCompressionPatch));
+        Try(harmony, "shared-respawn", typeof(SharedRespawnScopePatch));
+        Try(harmony, "shared-filth", typeof(SharedSavedFilthPatch));
+        Try(harmony, "pawn-path-resume", typeof(PawnPathResumePatch));
+        Try(harmony, "world-pawns-sort", typeof(WorldPawnsDeterministicTickPatch));
+        Try(harmony, "wander-herd", typeof(HerdWanderRootDeterministicPatch));
+        Try(harmony, "wander-dest", typeof(RandomWanderDestDeterministicPatch));
+        Try(harmony, "effect-isolation", typeof(TurboEffectIsolation));
+        if (SimulationDiagnostics.Enabled)
+        {
+            Try(harmony, "load-filth-trace", typeof(SharedFilthRemovalTracePatch));
+            Try(harmony, "map-stage-trace", typeof(MapStageTracePatch));
+            Try(harmony, "tick-list-trace", typeof(TickListStageTracePatch));
+            Try(harmony, "environment-stage-trace", typeof(EnvironmentStageTracePatch));
+            Try(harmony, "camera-rate-trace", typeof(CameraRateTracePatch));
+            Try(harmony, "pawn-tick-trace", typeof(PawnTickTracePatch));
+            Try(harmony, "pawn-path-trace", typeof(PawnPathTracePatch));
+            Try(harmony, "pawn-job-trace", typeof(PawnJobTracePatch));
+            Try(harmony, "rand-value-trace", typeof(RandValueTracePatch));
+            Try(harmony, "rand-int-trace", typeof(RandIntTracePatch));
+        }
+        Try(harmony, "world-load", typeof(WorldLoadScope));
+        Try(harmony, "world-load-failure", typeof(SharedLoadFailurePatch));
+        Try(harmony, "native-controls", typeof(NativeControlsPatch));
+        Try(harmony, "native-speed", typeof(NativeSpeedSetterPatch));
+        Try(harmony, "native-pause", typeof(NativePausePatch));
         // Without the gate a peer could simulate past the server and diverge; without capture nothing syncs.
-        AllCritical = status.GetValueOrDefault("designation")
+        AllCritical = status.GetValueOrDefault("simulation-rng")
+            && status.GetValueOrDefault("environment-state")
+            && status.GetValueOrDefault("pawn-path-state")
+            && status.GetValueOrDefault("designation")
             && status.GetValueOrDefault("blueprint")
             && status.GetValueOrDefault("draft")
             && status.GetValueOrDefault("order")
             && status.GetValueOrDefault("gate")
-            && status.GetValueOrDefault("apply");
+            && status.GetValueOrDefault("apply")
+            && status.GetValueOrDefault("shared-snapshot-ids")
+            && status.GetValueOrDefault("shared-respawn")
+            && status.GetValueOrDefault("shared-filth")
+            && status.GetValueOrDefault("pawn-path-resume")
+            && status.GetValueOrDefault("world-pawns-sort")
+            && status.GetValueOrDefault("wander-herd")
+            && status.GetValueOrDefault("wander-dest")
+            && status.GetValueOrDefault("effect-isolation")
+            && status.GetValueOrDefault("world-load")
+            && status.GetValueOrDefault("world-load-failure")
+            && status.GetValueOrDefault("native-controls")
+            && status.GetValueOrDefault("native-speed")
+            && status.GetValueOrDefault("native-pause");
         var summary = string.Join(" ", status.Select(pair => pair.Key + (pair.Value ? "✓" : "✗")));
         if (AllCritical) Log.Message("[TurboTick] 补丁已就绪：" + summary);
         else Log.Warning("[TurboTick] 部分补丁未挂载，共享殖民地将被禁用：" + summary);

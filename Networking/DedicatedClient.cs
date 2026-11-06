@@ -146,6 +146,26 @@ public sealed class DedicatedClient : IAsyncDisposable
         finally { _speedGate.Release(); }
     }
 
+    /// <summary>Requests a native pause/normal/fast/superfast/ultrafast selection. No optimistic local policy.
+    /// The session is captured before waiting, so a queued click never changes a different room.</summary>
+    public async Task SetTimeSpeedAsync(int timeSpeed, CancellationToken ct = default)
+    {
+        SpeedPolicy.ValidateTimeSpeed(timeSpeed);
+        var session = ConnectedSession();
+        using var queued = CancellationTokenSource.CreateLinkedTokenSource(ct, session.Token);
+        try { await _speedGate.WaitAsync(queued.Token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        { throw new NetworkException("SessionChanged", "The original connection closed while the native speed edit was queued."); }
+        try
+        {
+            var reply = await RequestAsync(new WireMessage { Type = "SetTimeSpeed", TimeSpeed = timeSpeed }, ct, session)
+                .ConfigureAwait(false);
+            if (reply.Type != "Policy" || reply.Policy is null)
+                throw new NetworkException("InvalidResponse", "The server did not acknowledge the native time speed.");
+        }
+        finally { _speedGate.Release(); }
+    }
+
     public async Task<SnapshotManifest?> GetSnapshotManifestAsync(CancellationToken ct = default)
     {
         var reply = await RequestAsync(new WireMessage { Type = "GetSnapshotManifest" }, ct).ConfigureAwait(false);

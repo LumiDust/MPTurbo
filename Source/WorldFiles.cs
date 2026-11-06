@@ -17,7 +17,7 @@ internal static class WorldFiles
     public static string SaveCurrentGame()
     {
         var name = "TurboTickCheckpoint_" + DateTime.UtcNow.Ticks;
-        GameDataSaveLoader.SaveGame(name);
+        using (SharedSnapshotStorage.Enter()) GameDataSaveLoader.SaveGame(name);
         var path = GenFilePaths.FilePathForSavedGame(name);
         if (!File.Exists(path)) throw new FileNotFoundException("保存后找不到存档文件：" + path);
         return path;

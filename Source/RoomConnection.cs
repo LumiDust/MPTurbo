@@ -12,6 +12,7 @@ internal static class RoomConnection
     private static DedicatedClient? client;
     private static CancellationTokenSource? lifetime;
     private static int generation;
+    private static TurboTickSettings? reconnectTarget;
     public static string Status { get; private set; } = "未连接";
     public static string Fingerprint { get; private set; } = "尚未生成";
     public static string SnapshotStatus { get; private set; } = "尚未下载；此阶段只缓存快照，不自动载入游戏";
@@ -41,6 +42,7 @@ internal static class RoomConnection
         }
         var name = settings.PlayerName.Trim();
         if (name.Length is < 1 or > 32) { SetStatus("玩家名称须为 1..32 字符"); return; }
+        reconnectTarget = new TurboTickSettings { ServerHost = host, ServerPort = port.ToString(), PlayerName = name };
         Leave();
         var id = ++generation;
         var cancel = lifetime = new CancellationTokenSource();
@@ -52,6 +54,7 @@ internal static class RoomConnection
         socket.PolicyChanged += policy => Post(id, () =>
         {
             TurboState.Authority.ApplyServer(policy);
+            NativeSpeedSync.ApplyConfirmed();
             SetStatus("房间已连接 · 服务端设置修订 " + policy.Revision);
             if (publishOnConnect && !publishedOnce) { publishedOnce = true; StartSharedColony(); }
         });
@@ -62,17 +65,11 @@ internal static class RoomConnection
         });
         socket.WorldStarted += (session, manifest) => Post(id, () =>
         {
-            if (manifest.Id == publishedWorldId)
-            {
-                // The controller just uploaded this save; its running game already is that world.
-                SharedColony.OnWorldStarted(session, manifest);
-                SharedColony.OnWorldLoaded();
-                SetStatus("共享殖民地已开始（本机为来源存档）");
-                return;
-            }
             Status = "共享殖民地已开始，正在同步存档…";
+            // Even the publisher loads the accepted snapshot; origin does not prove its live state still
+            // equals the bytes saved before the asynchronous upload.
             SharedColony.OnWorldStarted(session, manifest);
-            DownloadAndLoad(manifest, id);
+            DownloadAndLoad(manifest, id, SharedColony.Session.LoadGeneration);
         });
         socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
@@ -133,6 +130,23 @@ internal static class RoomConnection
         }));
     }
 
+    public static void RequestTimeSpeed(int speed, Action completed)
+    {
+        if (client?.IsConnected != true || !CanEdit) { completed(); return; }
+        var socket = client;
+        var id = generation;
+        var token = lifetime!.Token;
+        // Start immediately on the caller's thread. Task.Run per click would reorder fast key presses
+        // before the SDK's ordered speed queue ever sees them.
+        Track(SendAsync());
+        async Task SendAsync()
+        {
+            try { await socket.SetTimeSpeedAsync(speed, token).ConfigureAwait(false); }
+            catch (Exception error) { Post(id, () => SetStatus("原生速度未确认：" + error.Message)); }
+            finally { Post(id, completed); }
+        }
+    }
+
     /// <summary>Controller action: publish the current save as the shared world, then start the session.</summary>
     public static void StartSharedColony()
     {
@@ -147,11 +161,13 @@ internal static class RoomConnection
         var id = generation;
         var token = lifetime!.Token;
         Status = "正在保存当前殖民地…";
+        SharedColony.HoldForPublication();
         string path;
         try { path = WorldFiles.SaveCurrentGame(); }
-        catch (Exception error) { Status = "保存失败：" + error.Message; return; }
+        catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); Status = "保存失败：" + error.Message; return; }
         var bytes = File.ReadAllBytes(path);
         var manifest = WorldFiles.Describe(bytes);
+        SimulationDiagnostics.Boundary("snapshot-created", manifest.Id);
         Status = "正在上传存档（" + bytes.Length / 1024 + " KiB）…";
         Track(Task.Run(async () =>
         {
@@ -159,15 +175,15 @@ internal static class RoomConnection
             {
                 using var stream = new MemoryStream(bytes, writable: false);
                 await socket.UploadWorldAsync(manifest, stream, token).ConfigureAwait(false);
-                publishedWorldId = manifest.Id;
+
                 await socket.StartGameAsync(token).ConfigureAwait(false);
                 Post(id, () => Status = "已发布并开始共享殖民地");
             }
-            catch (Exception error) { Post(id, () => Status = "启动共享殖民地失败：" + error.Message); }
+            catch (Exception error) { Post(id, () => { SharedColony.OnWorldLoadFailed(error.Message); Status = "启动共享殖民地失败：" + error.Message; }); }
         }));
     }
 
-    private static void DownloadAndLoad(SnapshotManifest manifest, int id)
+    private static void DownloadAndLoad(SnapshotManifest manifest, int id, long loadGeneration)
     {
         var socket = client;
         var token = lifetime!.Token;
@@ -179,18 +195,26 @@ internal static class RoomConnection
                 await socket!.DownloadSnapshotAsync(manifest, path, null, token).ConfigureAwait(false);
                 Post(id, () =>
                 {
-                    if (id != generation) return;
+                    if (id != generation || loadGeneration != SharedColony.Session.LoadGeneration || SharedColony.Session.WorldId != manifest.Id) return;
                     try
                     {
                         var saveName = WorldFiles.PrepareLoad(path);
                         SetStatus("正在载入共享存档：" + saveName);
-                        SharedColony.BeginWorldLoad();
+                        SharedColony.BeginWorldLoad(saveName);
                         GameDataSaveLoader.LoadGame(saveName);
                     }
                     catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); SetStatus("载入共享存档失败：" + error.Message); }
                 });
             }
-            catch (Exception error) { Post(id, () => SetStatus("下载共享存档失败：" + error.Message)); }
+            catch (Exception error)
+            {
+                Post(id, () =>
+                {
+                    if (loadGeneration != SharedColony.Session.LoadGeneration || SharedColony.Session.WorldId != manifest.Id) return;
+                    SharedColony.OnWorldLoadFailed(error.Message);
+                    SetStatus("下载共享存档失败：" + error.Message);
+                });
+            }
         }));
     }
 
@@ -245,13 +269,12 @@ internal static class RoomConnection
     /// <summary>Desync recovery: drop the session and join again, which reloads the checkpoint and replays the delta.</summary>
     public static void ReconnectFromFault()
     {
-        var settings = TurboTickMod.Settings;
+        var settings = reconnectTarget;
         if (settings == null || string.IsNullOrWhiteSpace(settings.ServerHost)) return;
-        SharedColony.Session.Leave();
         Connect(settings);
     }
     private static int checkpointing;
-    private static string? publishedWorldId;
+
 
     /// <summary>Checkpoint owner: saves the colony at the current tick and publishes it so late joins replay less.</summary>
     public static void PublishCheckpoint(int tick)
@@ -266,6 +289,7 @@ internal static class RoomConnection
         catch (Exception error) { Interlocked.Exchange(ref checkpointing, 0); Status = "检查点保存失败：" + error.Message; return; }
         var bytes = File.ReadAllBytes(path);
         var manifest = WorldFiles.Describe(bytes);
+        SimulationDiagnostics.Boundary("checkpoint-created", manifest.Id);
         Track(Task.Run(async () =>
         {
             try
@@ -324,6 +348,8 @@ internal static class RoomConnection
         client = null;
         if (old != null) Track(Task.Run(async () => await old.DisposeAsync().ConfigureAwait(false)));
         TurboState.Authority.LeaveSession();
+        SharedColony.Reset();
+        NativeSpeedSync.Reset();
         Status = "未连接";
         Busy = false;
     }

@@ -22,6 +22,7 @@ internal sealed record WireMessage
     public string? Message { get; init; }
     public bool Fatal { get; init; }
     public SpeedRequest? Speed { get; init; }
+    public int? TimeSpeed { get; init; }
     public SnapshotManifest? Manifest { get; init; }
     public SnapshotChunk? Chunk { get; init; }
     public string? SnapshotId { get; init; }

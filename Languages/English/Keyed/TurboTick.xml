@@ -7,7 +7,6 @@
   <TurboTick_Connect>Connect / reconnect</TurboTick_Connect>
   <TurboTick_Disconnect>Leave room</TurboTick_Disconnect>
   <TurboTick_Fingerprint>Compatibility fingerprint: {0}</TurboTick_Fingerprint>
-  <TurboTick_Enable>Enable extra multiplier (off by default)</TurboTick_Enable>
   <TurboTick_EnableDesc>In a room, enabled state, multiplier and cap require server confirmation together. Single-player preferences stay local.</TurboTick_EnableDesc>
   <TurboTick_Multiplier>Extra multiplier: x{0}</TurboTick_Multiplier>
   <TurboTick_MaxRateCap>Total rate cap: {0}x</TurboTick_MaxRateCap>
@@ -35,4 +34,11 @@
   <TurboTick_ExperimentalDesc>Replicates loading items into transport pods. Not verified in game; off by default.</TurboTick_ExperimentalDesc>
   <TurboTick_EveryoneTrades>Allow everyone to trade and form caravans (unsynced)</TurboTick_EveryoneTrades>
   <TurboTick_EveryoneTradesDesc>By default only the host can trade or send out a caravan, keeping silver, goods and colonists consistent. Enabling this lets each player act locally, which can diverge.</TurboTick_EveryoneTradesDesc>
+  <TurboTick_NativeControls>In a room, the game's native pause, normal, fast and superfast buttons and key bindings synchronize by default. One player selects; all peers apply after server confirmation. Single-player keeps vanilla speeds.</TurboTick_NativeControls>
+  <TurboTick_NativeHud>TurboTick · {0} · r{1}</TurboTick_NativeHud>
+  <TurboTick_NativePaused>Paused</TurboTick_NativePaused>
+  <TurboTick_NativeNormal>Normal</TurboTick_NativeNormal>
+  <TurboTick_NativeFast>Fast</TurboTick_NativeFast>
+  <TurboTick_NativeSuperfast>Superfast</TurboTick_NativeSuperfast>
+  <TurboTick_NativeUltrafast>Developer ultrafast</TurboTick_NativeUltrafast>
 </LanguageData>
