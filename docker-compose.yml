@@ -1,3 +1,5 @@
+name: turbotick
+
 services:
   turbotick-server:
     image: ghcr.io/lumidust/turbotick-server:latest
