@@ -59,6 +59,7 @@ public sealed class DedicatedServer : IAsyncDisposable
     private int MaxHistory => _options.MaxHistory;
     private int _commandsSincePersist;
     private readonly object _commandGate = new();
+    private readonly object _hashGate = new();
     private int _hashWindowFloor;
     private const int HashWindow = 600;
     public int TrackedHashTicks => _firstHashAtTick.Count;
@@ -615,11 +616,15 @@ public sealed class DedicatedServer : IAsyncDisposable
             lock (_history) { _history.Clear(); _historyTruncated = false; }
             Volatile.Write(ref _checkpointManifest, world);
             Volatile.Write(ref _checkpointTick, 0);
-            _firstHashAtTick.Clear();
-            _firstCategoriesAtTick.Clear();
-            _hashByPeerTick.Clear();
-            _firstPeerAtTick.Clear();
-            lock (_reportedDesyncTicks) _reportedDesyncTicks.Clear();
+            lock (_hashGate)
+            {
+                _firstHashAtTick.Clear();
+                _firstCategoriesAtTick.Clear();
+                _hashByPeerTick.Clear();
+                _firstPeerAtTick.Clear();
+                _hashWindowFloor = 0;
+                _reportedDesyncTicks.Clear();
+            }
             Volatile.Write(ref _gameRunning, 1);
             var seed = Volatile.Read(ref _seed);
             foreach (var recipient in _peers.Values)
@@ -688,41 +693,43 @@ public sealed class DedicatedServer : IAsyncDisposable
     /// <summary>Compares each peer's reported state hash for a tick; the first mismatch is a desync.</summary>
     private void ReportHash(Peer peer, WireMessage message)
     {
-        if (!GameRunning || !peer.Joined) return;
-        if (message.Tick < 0 || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
-        var hash = message.Sha256!;
-        PruneHashWindow(message.Tick);
-        // Only distinct peers are comparable: the same peer reporting a tick twice is a resend, not a conflict.
-        var key = (peer.Id, message.Tick);
-        if (!_hashByPeerTick.TryAdd(key, hash)) return;
-        if (!_firstPeerAtTick.TryGetValue(message.Tick, out var firstPeer))
+        // The baseline spans several dictionaries. Two peer readers must not both observe a missing
+        // first report and return without ever comparing, or expose a half-written category baseline.
+        // Pruning and a world reset use this same boundary.
+        lock (_hashGate)
         {
-            _firstPeerAtTick[message.Tick] = peer.Id;
-            _firstHashAtTick[message.Tick] = hash;
-            if (message.Categories is { Length: > 0 }) _firstCategoriesAtTick[message.Tick] = message.Categories;
-            return;
+            if (!GameRunning || !peer.Joined) return;
+            if (message.Tick < 0 || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
+            var hash = message.Sha256!;
+            PruneHashWindow(message.Tick);
+            // Only distinct peers are comparable: a resend from the same peer is not a conflict.
+            var key = (peer.Id, message.Tick);
+            if (!_hashByPeerTick.TryAdd(key, hash)) return;
+            if (!_firstPeerAtTick.TryGetValue(message.Tick, out var firstPeer))
+            {
+                _firstPeerAtTick[message.Tick] = peer.Id;
+                _firstHashAtTick[message.Tick] = hash;
+                if (message.Categories is { Length: > 0 }) _firstCategoriesAtTick[message.Tick] = message.Categories;
+                return;
+            }
+            if (firstPeer == peer.Id) return;
+            var first = _firstHashAtTick[message.Tick];
+            if (string.Equals(first, hash, StringComparison.Ordinal) || !_reportedDesyncTicks.Add(message.Tick)) return;
+            // Name the divergent categories so a player can tell pawns from buildings from designations.
+            var differing = "state";
+            if (message.Categories is { Length: > 0 } mine && _firstCategoriesAtTick.TryGetValue(message.Tick, out var theirs)
+                && theirs.Length == mine.Length)
+            {
+                var names = new[] { "colonists", "things", "designations" };
+                var hits = new List<string>();
+                for (var i = 0; i < mine.Length; i++)
+                    if (!string.Equals(mine[i], theirs[i], StringComparison.Ordinal))
+                        hits.Add(i < names.Length ? names[i] : "category" + i);
+                if (hits.Count > 0) differing = string.Join(",", hits);
+            }
+            foreach (var recipient in _peers.Values)
+                if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Desync", Tick = message.Tick, Message = differing });
         }
-        if (firstPeer == peer.Id) return;
-        var first = _firstHashAtTick[message.Tick];
-        if (string.Equals(first, hash, StringComparison.Ordinal)) return;
-        lock (_reportedDesyncTicks)
-        {
-            if (!_reportedDesyncTicks.Add(message.Tick)) return;
-        }
-        // Name the divergent categories so a player can tell pawns from buildings from designations.
-        var differing = "state";
-        if (message.Categories is { Length: > 0 } mine && _firstCategoriesAtTick.TryGetValue(message.Tick, out var theirs)
-            && theirs.Length == mine.Length)
-        {
-            var names = new[] { "colonists", "things", "designations" };
-            var hits = new List<string>();
-            for (var i = 0; i < mine.Length; i++)
-                if (!string.Equals(mine[i], theirs[i], StringComparison.Ordinal))
-                    hits.Add(i < names.Length ? names[i] : "category" + i);
-            if (hits.Count > 0) differing = string.Join(",", hits);
-        }
-        foreach (var recipient in _peers.Values)
-            if (recipient.Joined) recipient.Queue(new WireMessage { Type = "Desync", Tick = message.Tick, Message = differing });
     }
 
     /// <summary>

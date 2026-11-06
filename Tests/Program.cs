@@ -6,6 +6,7 @@ using TurboTick.Simulation;
 
 var passed = 0;
 var failed = 0;
+var filter = args.Length == 2 && args[0] == "--filter" ? args[1] : null;
 var temp = Path.Combine(Path.GetTempPath(), "turbotick-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temp);
 string Dir(string name) { var p = Path.Combine(temp, name); Directory.CreateDirectory(p); return p; }
@@ -13,6 +14,7 @@ ClientHello Hello(string name = "A", string hash = "mod-a", string version = "1.
 
 async Task Test(string name, Func<Task> body)
 {
+    if (filter != null && !name.Contains(filter, StringComparison.OrdinalIgnoreCase)) return;
     try { await body().WaitAsync(TimeSpan.FromSeconds(25)); passed++; Console.WriteLine("PASS " + name); }
     catch (Exception ex) { failed++; Console.WriteLine("FAIL " + name + ": " + ex); }
 }
@@ -1004,7 +1006,6 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     await server.StartAsync();
     await using var host = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
-    AutoCheckpoint(host, server);
     Check(host.IsCheckpointOwner, "first peer owns checkpoints");
     var world = new byte[4096]; new Random(31).NextBytes(world);
     await host.ClaimHostAsync();
@@ -1020,6 +1021,19 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     await host.CheckpointWorldAsync(manifest, new MemoryStream(checkpoint), tick);
     Check(server.CheckpointTick == tick, "checkpoint tick recorded");
     Check(server.HistoryCount == 0, "commands before the checkpoint are dropped");
+    // Pin the snapshot being tested. A generic fresh-current-tick checkpoint can absorb the draft
+    // into its snapshot before the joiner receives history, making the expected delta disappear.
+    var checkpointReply = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    host.CheckpointRequested += () => { _ = RepublishCheckpoint(); };
+    async Task RepublishCheckpoint()
+    {
+        try
+        {
+            await host.CheckpointWorldAsync(manifest, new MemoryStream(checkpoint), tick);
+            checkpointReply.TrySetResult();
+        }
+        catch (Exception error) { checkpointReply.TrySetException(error); }
+    }
     await host.SendCommandAsync("draft", "7|1"u8.ToArray());
     await Until(() => server.HistoryCount == 1);
     await using var late = new DedicatedClient();
@@ -1029,7 +1043,8 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     late.CommandsReceived += commands => { lock (replay) replay.AddRange(commands); };
     await late.ConnectAsync("127.0.0.1", server.Port, Hello("late"));
     var info = await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-    Check(info.SnapshotTick >= tick, "late peer starts from a checkpoint at or after the trim point");
+    await checkpointReply.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    Check(info.SnapshotTick == tick, "late peer starts from the selected checkpoint boundary");
     await Until(() => { lock (replay) return replay.Count == 1; });
     Check(replay[0].Kind == "draft", "only the delta replays");
 });
@@ -1062,6 +1077,49 @@ await Test("server rejects unknown command kinds and throttles a flooding client
     await host.SendCommandAsync("designation", "Mine|0|9|9"u8.ToArray());
     await Until(() => server.HistoryCount > accepted);
     Check(server.HistoryCount > accepted, "client recovers after the window");
+});
+
+await Test("concurrent state hashes compare every shared tick", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("concurrent-hashes")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient();
+    await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("hash-a"));
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("hash-b"));
+    await a.ClaimHostAsync();
+    var world = new byte[128];
+    await a.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await a.StartGameAsync();
+    await Until(() => a.PresenceEpoch == server.Epoch && b.PresenceEpoch == server.Epoch);
+    var pawns = new string('1', 64);
+    var things = new string('2', 64);
+    for (var round = 1; round <= 256; round++)
+    {
+        var expectedTick = round;
+        var detail = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action<int, string> record = (tick, text) => { if (tick == expectedTick) detail.TrySetResult(text); };
+        b.DesyncDetected += record;
+        try
+        {
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var first = Task.Run(async () =>
+            {
+                await start.Task;
+                await a.ReportHashAsync(expectedTick, new string('a', 64), [pawns, things, new string('3', 64)]);
+            });
+            var second = Task.Run(async () =>
+            {
+                await start.Task;
+                await b.ReportHashAsync(expectedTick, new string('b', 64), [pawns, things, new string('4', 64)]);
+            });
+            start.SetResult();
+            await Task.WhenAll(first, second);
+            Check(await detail.Task.WaitAsync(TimeSpan.FromSeconds(5)) == "designations",
+                $"concurrent report pair {expectedTick} must be compared exactly once with category detail");
+        }
+        finally { b.DesyncDetected -= record; }
+    }
 });
 
 await Test("desync detail names the category that diverged", async () =>
