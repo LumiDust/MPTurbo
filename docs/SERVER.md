@@ -2,12 +2,44 @@
 
 TurboTick 的独立专用服务器，运行需要 **.NET 10 Runtime**，不需要安装游戏。当前为 0.4.0 版本，提供房间握手、原生速度同步、快照分发、动作中继和锁步状态哈希校验。
 
-## 启动
+## 启动方式
+
+### 方式 A：Docker 容器运行（推荐）
+
+官方预构建镜像托管在 GitHub Container Registry（GHCR）：
+
+```sh
+docker run -d \
+  --name turbotick-server \
+  --restart unless-stopped \
+  -p 30572:30572 \
+  -v turbotick-data:/data \
+  ghcr.io/lumidust/turbotick-server:latest
+```
+
+或使用仓库自带的 `docker-compose.yml`：
+
+```sh
+docker compose up -d
+```
+
+#### 容器环境变量
+
+| 变量名 | 默认值 | 说明 |
+|---|---|---|
+| `TURBOTICK_HOST` | `0.0.0.0` | 监听地址 |
+| `TURBOTICK_PORT` | `30572` | 监听端口 |
+| `TURBOTICK_DATA` | `/data` | 持久化数据目录（建议挂载数据卷） |
+| `TURBOTICK_CONTROLLER_ONLY` | `false` | 设为 `true` 仅首位加入玩家可控制倍率 |
+| `TURBOTICK_GAME_VERSION` | 空 | 锁定特定游戏 build |
+| `TURBOTICK_MOD_HASH` | 空 | 锁定特定模组配置指纹 |
+
+### 方式 B：原生 .NET 10 运行
 
 在解压目录执行：
 
 ```sh
-dotnet TurboTick.Server.dll --host 127.0.0.1 --port 30572 --data Saved
+dotnet TurboTick.Server.dll --host 0.0.0.0 --port 30572 --data Saved
 ```
 
 用 `Ctrl+C` 正常退出。完整参数：

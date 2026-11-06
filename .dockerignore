@@ -1,0 +1,13 @@
+**/.git
+**/.github
+**/.vs
+**/bin
+**/obj
+**/artifacts
+*.tmp
+*.log
+*.zip
+*.rws
+workshop-local
+.editorconfig
+.gitattributes

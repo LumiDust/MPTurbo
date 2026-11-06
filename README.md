@@ -36,11 +36,15 @@
 
 1. 从 [Actions 构建产物](https://github.com/LumiDust/TurboTick/actions/workflows/build.yml) 下载 mod 和 server 两个压缩包。
 2. 将 mod 包中的 `TurboTick/` 放入游戏 `Mods/`，启用 Harmony 和 TurboTick。
-3. 解压 server 包，在该目录启动：
-
-   ```sh
-   dotnet TurboTick.Server.dll --host 127.0.0.1 --port 30572 --data Saved
-   ```
+3. 启动专用服务器（支持 Docker 容器或原生 .NET 10）：
+   - **Docker 一键启动（推荐）**：
+     ```sh
+     docker run -d --name turbotick-server -p 30572:30572 -v turbotick-data:/data ghcr.io/lumidust/turbotick-server:latest
+     ```
+   - **原生 .NET 10 运行**：解压 server 包并在该目录执行：
+     ```sh
+     dotnet TurboTick.Server.dll --host 0.0.0.0 --port 30572 --data Saved
+     ```
 
 4. 在「选项 → Mod 设置 → TurboTick」填写地址、端口和玩家名称，点击连接。
 5. 控制者点击「发布当前殖民地并开始共享」：存档上传后，所有已连接玩家自动下载并载入同一殖民地。

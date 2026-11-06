@@ -1,0 +1,18 @@
+services:
+  turbotick-server:
+    image: ghcr.io/lumidust/turbotick-server:latest
+    container_name: turbotick-server
+    restart: unless-stopped
+    ports:
+      - "30572:30572"
+    volumes:
+      - turbotick-data:/data
+    environment:
+      - TURBOTICK_HOST=0.0.0.0
+      - TURBOTICK_PORT=30572
+      - TURBOTICK_DATA=/data
+      - TURBOTICK_CONTROLLER_ONLY=false
+
+volumes:
+  turbotick-data:
+    driver: local

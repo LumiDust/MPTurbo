@@ -6,6 +6,20 @@ return await RunAsync(args);
 static async Task<int> RunAsync(string[] arguments)
 {
     var options = new ServerOptions();
+    var hostEnv = Environment.GetEnvironmentVariable("TURBOTICK_HOST");
+    var portEnv = Environment.GetEnvironmentVariable("TURBOTICK_PORT");
+    var dataEnv = Environment.GetEnvironmentVariable("TURBOTICK_DATA");
+    var gameVerEnv = Environment.GetEnvironmentVariable("TURBOTICK_GAME_VERSION");
+    var modHashEnv = Environment.GetEnvironmentVariable("TURBOTICK_MOD_HASH");
+    var ctrlOnlyEnv = Environment.GetEnvironmentVariable("TURBOTICK_CONTROLLER_ONLY");
+
+    if (!string.IsNullOrWhiteSpace(hostEnv)) options = options with { Address = hostEnv };
+    if (!string.IsNullOrWhiteSpace(portEnv) && int.TryParse(portEnv, NumberStyles.None, CultureInfo.InvariantCulture, out var parsedPort)) options = options with { Port = parsedPort };
+    if (!string.IsNullOrWhiteSpace(dataEnv)) options = options with { DataDirectory = dataEnv };
+    if (!string.IsNullOrWhiteSpace(gameVerEnv)) options = options with { GameVersion = gameVerEnv };
+    if (!string.IsNullOrWhiteSpace(modHashEnv)) options = options with { ModHash = modHashEnv };
+    if (string.Equals(ctrlOnlyEnv, "true", StringComparison.OrdinalIgnoreCase) || string.Equals(ctrlOnlyEnv, "1")) options = options with { EveryoneCanEdit = false };
+
     string? importPath = null;
     try
     {
