@@ -179,7 +179,7 @@ public sealed partial class DedicatedServer
             ct.ThrowIfCancellationRequested();
             var name = Path.GetFileName(entry);
             if (root && (string.Equals(name, "Archives", StringComparison.OrdinalIgnoreCase)
-                || name is "headless.lock" or "headless-status.json" or "headless-status.json.tmp")) continue;
+                || name is "headless.lock" or "deployment.lock" or "headless-status.json" or "headless-status.json.tmp")) continue;
             var attributes = File.GetAttributes(entry);
             // Never follow local symlinks out of the configured persistent data directory.
             if ((attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("Archive source contains a link.");

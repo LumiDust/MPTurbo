@@ -6,7 +6,7 @@ namespace TurboTick.Networking;
 public static class NetworkProtocol
 {
     public const int Version = 4;
-    public const string ClientVersion = "0.5.1";
+    public const string ClientVersion = "0.5.2";
     public const int MaximumFrameLength = 4 * 1024 * 1024;
     public const int SnapshotChunkSize = 256 * 1024;
 }

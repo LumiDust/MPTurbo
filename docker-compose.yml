@@ -1,20 +1,90 @@
-name: turbotick
+name: turbotick-headless
 
 services:
-  turbotick-server:
-    image: ghcr.io/lumidust/turbotick-server:0.5.1
-    container_name: turbotick-server
+  headless:
+    image: ghcr.io/lumidust/turbotick-headless:0.5.2
+    platform: linux/amd64
+    user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
+    command: ["run"]
+    init: true
     restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
     ports:
-      - "30572:30572"
-    volumes:
-      - turbotick-data:/data
+      - "${TURBOTICK_BIND_ADDRESS:-0.0.0.0}:${TURBOTICK_PUBLISHED_PORT:-30572}:30572/tcp"
     environment:
-      - TURBOTICK_HOST=0.0.0.0
-      - TURBOTICK_PORT=30572
-      - TURBOTICK_DATA=/data
-      - TURBOTICK_CONTROLLER_ONLY=false
+      TURBOTICK_HOST: "0.0.0.0"
+      TURBOTICK_PORT: "30572"
+      TURBOTICK_DATA: /state
+      HOME: /profile
+      XDG_CONFIG_HOME: /profile/.config
+      TURBOTICK_CONTROLLER_ONLY: "${TURBOTICK_CONTROLLER_ONLY:-false}"
+      TURBOTICK_SAVE: "${TURBOTICK_SAVE:-}"
+      TURBOTICK_EXPECTED_GAME_VERSION: "${TURBOTICK_EXPECTED_GAME_VERSION:-1.7}"
+      TURBOTICK_HEALTH_MAX_AGE_SECONDS: "${TURBOTICK_HEALTH_MAX_AGE_SECONDS:-30}"
+    volumes:
+      - type: bind
+        source: ${TURBOTICK_GAME_DIR:-./data/game}
+        target: /game
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_PROFILE_DIR:-./data/profile}
+        target: /profile
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_STATE_DIR:-./data/state}
+        target: /state
+        bind:
+          create_host_path: false
 
-volumes:
-  turbotick-data:
-    driver: local
+  installer:
+    image: ghcr.io/lumidust/turbotick-headless:0.5.2
+    platform: linux/amd64
+    user: "${TURBOTICK_UID:-10001}:${TURBOTICK_GID:-10001}"
+    profiles: ["setup"]
+    command: ["install"]
+    init: true
+    stdin_open: true
+    tty: true
+    restart: "no"
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+    read_only: true
+    tmpfs:
+      - /tmp:rw,exec,nosuid,nodev,size=512m,mode=1777
+    healthcheck:
+      disable: true
+    environment:
+      STEAM_USER: "${STEAM_USER:-}"
+      TURBOTICK_GAME_BRANCH: "${TURBOTICK_GAME_BRANCH:-unstable}"
+      TURBOTICK_EXPECTED_GAME_VERSION: "${TURBOTICK_EXPECTED_GAME_VERSION:-1.7}"
+      HTTP_PROXY: "${INSTALL_HTTP_PROXY:-}"
+      HTTPS_PROXY: "${INSTALL_HTTPS_PROXY:-}"
+      ALL_PROXY: "${INSTALL_ALL_PROXY:-}"
+    volumes:
+      - type: bind
+        source: ${TURBOTICK_GAME_DIR:-./data/game}
+        target: /game
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_PROFILE_DIR:-./data/profile}
+        target: /profile
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_STATE_DIR:-./data/state}
+        target: /state
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${TURBOTICK_STEAM_CACHE_DIR:-./data/steam-cache}
+        target: /steam
+        bind:
+          create_host_path: false

@@ -326,7 +326,9 @@ internal static class HeadlessRuntime
     private static string? Option(string name)
     {
         if (GenCommandLine.TryGetCommandLineArg("turbotick-" + name, out var value)) return value;
-        return Environment.GetEnvironmentVariable("TURBOTICK_" + name.Replace('-', '_').ToUpperInvariant());
+        var environment = Environment.GetEnvironmentVariable("TURBOTICK_" + name.Replace('-', '_').ToUpperInvariant());
+        // Compose represents an unset optional setting as an empty environment value.
+        return string.IsNullOrEmpty(environment) ? null : environment;
     }
     private static void WriteStatus()
     {

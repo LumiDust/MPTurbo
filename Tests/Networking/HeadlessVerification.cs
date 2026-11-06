@@ -242,6 +242,8 @@ internal static class HeadlessVerification
             "A reset changed the resident's installed modpack or disturbed its existing world.");
         using var directoryLock = new FileStream(Path.Combine(options.DataDirectory, "headless.lock"),
             FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        using var deploymentLock = new FileStream(Path.Combine(options.DataDirectory, "deployment.lock"),
+            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var nextHello = Hello("New host");
         await admin.ResetRoomAsync(nextHello);
         await Until(() => !simulation.IsConnected && !host.IsConnected);

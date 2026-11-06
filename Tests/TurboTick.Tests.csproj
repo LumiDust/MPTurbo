@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="Networking/**/*.cs" />
     <ProjectReference Include="../Networking/TurboTick.Networking.csproj" />
     <ProjectReference Include="../Simulation/TurboTick.Simulation.csproj" />
   </ItemGroup>

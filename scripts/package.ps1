@@ -23,7 +23,7 @@ function Resolve-TestBash {
 $out = [IO.Path]::GetFullPath((Join-Path $repo 'artifacts'))
 function Reset-OutputDirectory([string]$Path) {
     $resolved = [IO.Path]::GetFullPath($Path)
-    if ($resolved -notin @((Join-Path $out 'mod/TurboTick'), (Join-Path $out 'server'), (Join-Path $out 'headless'))) {
+    if ($resolved -notin @((Join-Path $out 'mod/TurboTick'), (Join-Path $out 'headless'))) {
         throw "Unexpected output directory: $resolved"
     }
     if (Test-Path -LiteralPath $resolved) {
@@ -33,6 +33,11 @@ function Reset-OutputDirectory([string]$Path) {
         Remove-Item -LiteralPath $resolved -Recurse -Force
     }
     New-Item -Path $resolved -ItemType Directory -Force | Out-Null
+}
+function Create-Package([string]$Directory, [string]$Path, [bool]$IncludeBase = $false) {
+    if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+    # Include dotfiles such as .env.example on Linux as well as Windows.
+    [IO.Compression.ZipFile]::CreateFromDirectory($Directory, $Path, [IO.Compression.CompressionLevel]::Optimal, $IncludeBase)
 }
 function Assert-Package([string]$Path, [string[]]$AllowedAssemblies) {
     $archive = [IO.Compression.ZipFile]::OpenRead($Path)
@@ -56,17 +61,18 @@ try {
     $buildArguments = @('build', 'Source/TurboTick.csproj', '-c', 'Release')
     if ($RimWorldDir) { $buildArguments += "-p:RimWorldDir=$RimWorldDir" }
     Run-Dotnet -Arguments $buildArguments
-    $mod = Join-Path $out 'mod/TurboTick'
-    $server = Join-Path $out 'server'
-    $headless = Join-Path $out 'headless'
-    Reset-OutputDirectory $server
-    Run-Dotnet -Arguments @('publish', 'Server/TurboTick.Server.csproj', '-c', 'Release', '--self-contained', 'false',
-        '-p:UseAppHost=false', '-p:DebugType=None', '-p:DebugSymbols=false', '-o', $server)
     Run-Dotnet -Arguments @('run', '--project', 'Tests/TurboTick.Tests.csproj', '-c', 'Release')
-    Run-Dotnet -Arguments @('run', '--project', 'Server/Verification/TurboTick.Networking.Verification.csproj', '-c', 'Release',
-        '--', '--server-program', (Join-Path $server 'TurboTick.Server.dll'))
-    & (Join-Path $PSScriptRoot 'steamcmd/test-install-server.ps1') -Bash (Resolve-TestBash)
-
+    Run-Dotnet -Arguments @('run', '--project', 'Tests/Networking/TurboTick.Networking.Tests.csproj', '-c', 'Release')
+    $testBash = Resolve-TestBash
+    & (Join-Path $PSScriptRoot 'steamcmd/test-install-server.ps1') -Bash $testBash
+    foreach ($script in Get-ChildItem (Join-Path $repo 'deploy/container') -File -Filter '*.sh') {
+        $path = $script.FullName.Replace('\', '/')
+        if ($path -match '^([a-zA-Z]):/(.*)$') { $path = '/' + $Matches[1].ToLowerInvariant() + '/' + $Matches[2] }
+        & $testBash -n $path
+        if ($LASTEXITCODE -ne 0) { throw "Container script syntax failed: $($script.Name)" }
+    }
+    $mod = Join-Path $out 'mod/TurboTick'
+    $headless = Join-Path $out 'headless'
     Reset-OutputDirectory $mod
     foreach ($directory in @('About', 'Languages')) {
         Get-ChildItem -LiteralPath (Join-Path $repo $directory) -File -Recurse |
@@ -86,28 +92,33 @@ try {
     foreach ($file in @('LoadFolders.xml', 'README.md', 'LICENSE')) {
         Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $mod
     }
-    foreach ($file in @('README.md', 'LICENSE')) { Copy-Item -LiteralPath (Join-Path $repo $file) -Destination $server }
     $modZip = Join-Path $out "TurboTick-$version-mod-1.7.zip"
-    $serverZip = Join-Path $out "TurboTick-$version-server.zip"
-    Compress-Archive -Path $mod -DestinationPath $modZip -Force
-    Compress-Archive -Path (Join-Path $server '*') -DestinationPath $serverZip -Force
+    Create-Package $mod $modZip $true
 
     Reset-OutputDirectory $headless
     Copy-Item -LiteralPath $mod -Destination (Join-Path $headless 'TurboTick') -Recurse
-    foreach ($directory in @('scripts/steamcmd', 'deploy')) {
+    foreach ($directory in @('scripts/steamcmd', 'deploy/container')) {
         New-Item (Join-Path $headless $directory) -ItemType Directory -Force | Out-Null
     }
     foreach ($file in @('scripts/steamcmd/install-server.sh', 'scripts/steamcmd/install-server.ps1',
-        'deploy/README.md', 'deploy/turbotick-headless.service', 'README.md', 'LICENSE')) {
+        'deploy/README.md', 'deploy/turbotick-headless.service', 'docker-compose.yml', '.env.example', 'README.md', 'LICENSE')) {
         Copy-Item -LiteralPath (Join-Path $repo $file) -Destination (Join-Path $headless $file)
     }
+    foreach ($file in Get-ChildItem (Join-Path $repo 'deploy/container') -File) {
+        Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $headless 'deploy/container')
+    }
     $headlessZip = Join-Path $out "TurboTick-$version-headless-installer.zip"
-    Compress-Archive -Path (Join-Path $headless '*') -DestinationPath $headlessZip -Force
+    Create-Package $headless $headlessZip
     Assert-Package $modZip $modAssemblies
-    Assert-Package $serverZip @('TurboTick.Server.dll', 'TurboTick.Networking.dll')
     Assert-Package $headlessZip $modAssemblies
-    $packages = @($modZip, $serverZip, $headlessZip)
-    $hashes = Get-FileHash -LiteralPath $packages -Algorithm SHA256
+    $zip = [IO.Compression.ZipFile]::OpenRead($headlessZip)
+    try {
+        foreach ($required in @('.env.example', 'docker-compose.yml', 'deploy/README.md', 'scripts/steamcmd/install-server.sh')) {
+            if (-not $zip.GetEntry($required)) { throw "Headless package is missing $required." }
+        }
+    }
+    finally { $zip.Dispose() }
+    $hashes = Get-FileHash -LiteralPath $modZip, $headlessZip -Algorithm SHA256
     $lines = $hashes | ForEach-Object { "$($_.Hash.ToLowerInvariant())  $([IO.Path]::GetFileName($_.Path))" }
     [IO.File]::WriteAllText((Join-Path $out 'SHA256SUMS'), ($lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
     $hashes | Select-Object Hash, Path

@@ -1,9 +1,7 @@
 using System.Buffers.Binary;
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using TurboTick.Networking;
 
@@ -44,76 +42,6 @@ internal static class AdminVerification
             var error = await Throws<NetworkException>(() => admin.ConnectAsync("127.0.0.1", server.Port, "unused"));
             Assert(error.Code == "AdminDisabled" && !admin.IsConnected && server.LockedModHash is null, "Disabled management accepted or changed room.");
         });
-    }
-
-    internal static async Task VerifyProgramAsync(string programPath, string root)
-    {
-        programPath = Path.GetFullPath(programPath);
-        Assert(File.Exists(programPath), "Build the server program before CLI verification.");
-        var directory = Path.Combine(root, "admin-program");
-        Directory.CreateDirectory(directory);
-        var secret = Guid.NewGuid().ToString("N");
-        var wrong = Guid.NewGuid().ToString("N");
-        var passwordFile = Path.Combine(directory, "password.txt");
-        await File.WriteAllTextAsync(passwordFile, secret + "\r\n");
-        var dotnet = Path.Combine(Environment.GetEnvironmentVariable("DOTNET_ROOT") ?? "", OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
-        ProcessStartInfo StartInfo(string? file, params string[] arguments)
-        {
-            var start = new ProcessStartInfo(dotnet) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-            start.ArgumentList.Add(programPath);
-            foreach (var argument in arguments) start.ArgumentList.Add(argument);
-            foreach (var name in new[] { "TURBOTICK_HOST", "TURBOTICK_PORT", "TURBOTICK_DATA", "TURBOTICK_GAME_VERSION", "TURBOTICK_MOD_HASH", "TURBOTICK_CONTROLLER_ONLY", "TURBOTICK_ADMIN_PASSWORD_FILE", "TURBOTICK_ADMIN_PASSWORD" })
-                start.Environment.Remove(name);
-            if (file is not null) start.Environment["TURBOTICK_ADMIN_PASSWORD_FILE"] = file;
-            start.Environment["TURBOTICK_ADMIN_PASSWORD"] = wrong;
-            return start;
-        }
-        using (var help = Process.Start(StartInfo(passwordFile + ".missing", "--help"))!)
-        {
-            var output = await help.StandardOutput.ReadToEndAsync();
-            await help.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            Assert(help.ExitCode == 0 && output.Contains("TURBOTICK_ADMIN_PASSWORD_FILE") && output.Contains("TURBOTICK_ADMIN_PASSWORD"), "Management configuration is missing from help.");
-        }
-        foreach (var invalid in new[] { passwordFile + ".missing", Path.Combine(directory, "empty.txt") })
-        {
-            if (invalid.EndsWith("empty.txt", StringComparison.Ordinal)) await File.WriteAllTextAsync(invalid, "\r\n");
-            using var failed = Process.Start(StartInfo(invalid, "--port", "0", "--data", Path.Combine(directory, "failed")))!;
-            var output = await failed.StandardOutput.ReadToEndAsync();
-            var error = await failed.StandardError.ReadToEndAsync();
-            await failed.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
-            Assert(failed.ExitCode != 0 && error.Contains("Management password file") && !output.Contains(secret) && !error.Contains(secret) && !error.Contains(wrong),
-                "Invalid password file did not fail startup explicitly or exposed a credential.");
-        }
-        using var server = Process.Start(StartInfo(passwordFile, "--host", "127.0.0.1", "--port", "0", "--data", Path.Combine(directory, "data")))!;
-        var lines = new StringBuilder();
-        var errors = server.StandardError.ReadToEndAsync();
-        try
-        {
-            int port;
-            while (true)
-            {
-                var line = await server.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5));
-                Assert(line is not null, "Configured server exited before listening.");
-                lines.AppendLine(line);
-                var marker = line!.IndexOf("listening on 127.0.0.1:", StringComparison.Ordinal);
-                if (marker < 0) continue;
-                port = int.Parse(line[(marker + "listening on 127.0.0.1:".Length)..].TrimEnd('.'), System.Globalization.CultureInfo.InvariantCulture);
-                break;
-            }
-            await using var admin = new DedicatedAdminClient();
-            await admin.ConnectAsync("127.0.0.1", port, secret);
-            Assert((await admin.GetStatusAsync()).PlayerCount == 0, "Password file did not initialize management.");
-            await using var rejected = new DedicatedAdminClient();
-            Assert((await Throws<NetworkException>(() => rejected.ConnectAsync("127.0.0.1", port, wrong))).Code == "AdminAuthenticationFailed", "Password env overrode the configured password file.");
-        }
-        finally
-        {
-            if (!server.HasExited) server.Kill(entireProcessTree: true);
-            await server.WaitForExitAsync();
-            lines.Append(await server.StandardOutput.ReadToEndAsync());
-            var error = await errors;
-            Assert(!lines.ToString().Contains(secret) && !lines.ToString().Contains(wrong) && !error.Contains(secret) && !error.Contains(wrong), "Server output exposed a password.");
-        }
     }
 
     private static async Task VerifyProofsAsync(string root)

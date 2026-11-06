@@ -1,17 +1,20 @@
-# Only the dedicated-server build inputs enter the Docker context.
-*
+# Allow only runtime scripts, the official installer, license, and the exact
+# prebuilt Release Mod. No source builds, game, Harmony, .env, or Steam cache.
+**
 !Dockerfile
 !.dockerignore
-!Directory.Build.props
 !LICENSE
-!Networking/
-Networking/*
-!Networking/*.cs
-!Networking/*.csproj
-!Server/
-Server/*
-!Server/Program.cs
-!Server/TurboTick.Server.csproj
-**/bin/**
-**/obj/**
-**/Verification/**
+!deploy/
+!deploy/container/
+!deploy/container/entrypoint.sh
+!deploy/container/steamcmd.sh
+!deploy/container/container.py
+!scripts/
+!scripts/steamcmd/
+!scripts/steamcmd/install-server.sh
+!artifacts/
+!artifacts/container-mod/
+!artifacts/container-mod/TurboTick/
+!artifacts/container-mod/TurboTick/**
+.env
+**/.env

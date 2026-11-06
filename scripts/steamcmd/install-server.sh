@@ -38,7 +38,7 @@ Usage: install-server.sh [options]
   --dir PATH           Separate installation (default /srv/turbotick/game).
   --steamcmd PATH      SteamCMD executable or wrapper (default steamcmd in PATH).
   --user NAME          Existing SteamCMD account; anonymous only where app permits.
-  --proxy URL          Process proxy environment, e.g. http://127.0.0.1:7897.
+  --proxy URL          Process proxy environment, e.g. http://PROXY_HOST:PROXY_PORT.
   --executable PATH    Relative executable. Required for official-server.
   --required-path PATH Relative required file/directory; repeat for official-server.
   --launch-arg ARG     One literal argv item; repeat. No shell evaluation.

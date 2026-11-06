@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using TurboTick.Networking;
 
-var root = Path.Combine(Path.GetTempPath(), "TurboTick-network-verify-" + Guid.NewGuid().ToString("N"));
+var root = Path.Combine(Path.GetTempPath(), "TurboTick-network-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
 var passed = 0;
 try
@@ -20,16 +20,6 @@ try
     });
 
     await AdminVerification.RunAsync(root, Check);
-    var serverProgramIndex = Array.IndexOf(args, "--server-program");
-    if (serverProgramIndex >= 0)
-        await Check("server program password-file precedence, startup failures, help and output secrecy", () =>
-            AdminVerification.VerifyProgramAsync(args[serverProgramIndex + 1], root));
-    if (args.Contains("--admin-only"))
-    {
-        Console.WriteLine($"PASS: {passed} management verification groups.");
-        return 0;
-    }
-
     await HeadlessVerification.RunAsync(root, Check);
 
     await using var server = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: Path.Combine(root, "server")));
@@ -401,7 +391,7 @@ try
         finally { foreach (var peer in peers) peer.Dispose(); }
     });
 
-    Console.WriteLine($"PASS: {passed} independent networking verification groups.");
+    Console.WriteLine($"PASS: {passed} networking test groups.");
     return 0;
 }
 finally

@@ -1,0 +1,11 @@
+# Optional management password file; pass with both Compose files.
+services:
+  headless:
+    environment:
+      TURBOTICK_ADMIN_PASSWORD_FILE: /run/secrets/turbotick_admin_password
+    secrets:
+      - turbotick_admin_password
+
+secrets:
+  turbotick_admin_password:
+    file: ${TURBOTICK_ADMIN_PASSWORD_HOST_FILE:?Set an existing password file readable by the container UID}
