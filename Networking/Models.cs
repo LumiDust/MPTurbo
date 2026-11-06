@@ -92,9 +92,15 @@ public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId,
 /// of running their own simulation, so they cannot diverge.</summary>
 public sealed record ReplicaPawn(int Id, int Map, float X, float Z, int Rotation, string? Job, float Health);
 
-/// <summary>A tick of authoritative colony state. Sent to display replicas only; the host's own
-/// simulation peer never receives its own frame.</summary>
-public sealed record AuthoritativeFrame(int Tick, IReadOnlyList<ReplicaPawn> Pawns);
+/// <summary>One non-pawn object as the host simulates it. Only objects that changed since the previous
+/// frame are sent, so a colony with tens of thousands of plants does not stream every tick.</summary>
+public sealed record ReplicaThing(int Id, int Map, int X, int Z, int Rotation, int Stack, int HitPoints);
+
+/// <summary>A tick of authoritative colony state. Pawns are always sent in full because there are few;
+/// things travel as a delta plus explicit removals. The host's own simulation peer never receives its
+/// own frame.</summary>
+public sealed record AuthoritativeFrame(int Tick, IReadOnlyList<ReplicaPawn> Pawns,
+    IReadOnlyList<ReplicaThing>? Changed = null, IReadOnlyList<int>? Removed = null);
 public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 30572, string DataDirectory = "Saved",
     string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true, int MaxHistory = 200_000,
     string? AdminPassword = null)

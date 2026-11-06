@@ -58,20 +58,52 @@ internal static class AuthoritativeReplica
         LastFrameTick = frame.Tick;
         AppliedFrames++;
         SharedColony.Session.Barrier.Observe(frame.Tick);
-        foreach (var state in frame.Pawns) Apply(state);
+        foreach (var state in frame.Pawns) ApplyPawn(state);
+        if (frame.Changed is { Count: > 0 } changed)
+            foreach (var state in changed) ApplyThing(state);
+        if (frame.Removed is { Count: > 0 } removed)
+            foreach (var id in removed) RemoveThing(id);
         if (AppliedFrames % 600 == 0)
-            Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色，累计 {AppliedFrames} 帧。");
+            Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色，{frame.Changed?.Count ?? 0} 个物体变化，累计 {AppliedFrames} 帧。");
     }
 
-    private static void Apply(ReplicaPawn state)
+    private static Pawn? FindPawn(int id, int mapId)
     {
-        Pawn? pawn = null;
         foreach (var map in Find.Maps)
         {
-            if (map.uniqueID != state.Map) continue;
-            pawn = map.mapPawns.AllPawnsSpawned.FirstOrDefault(candidate => candidate.thingIDNumber == state.Id);
-            break;
+            if (map.uniqueID != mapId) continue;
+            return map.mapPawns.AllPawnsSpawned.FirstOrDefault(candidate => candidate.thingIDNumber == id);
         }
+        return null;
+    }
+
+    private static Thing? FindThing(int id)
+    {
+        foreach (var map in Find.Maps)
+        {
+            var found = map.listerThings.AllThings.FirstOrDefault(candidate => candidate.thingIDNumber == id);
+            if (found is not null) return found;
+        }
+        return null;
+    }
+
+    private static void ApplyThing(ReplicaThing state)
+    {
+        var thing = FindThing(state.Id);
+        if (thing is null) return; // Objects spawned after the load are not created yet.
+        var cell = new IntVec3(state.X, 0, state.Z);
+        if (thing.Position != cell) thing.Position = cell;
+        var rotation = new Rot4(state.Rotation);
+        if (thing.Rotation != rotation) thing.Rotation = rotation;
+        if (thing.def.stackLimit > 1 && thing.stackCount != state.Stack) thing.stackCount = state.Stack;
+        if (thing.def.useHitPoints && thing.HitPoints != state.HitPoints) thing.HitPoints = state.HitPoints;
+    }
+
+    private static void RemoveThing(int id) => FindThing(id)?.Destroy(DestroyMode.Vanish);
+
+    private static void ApplyPawn(ReplicaPawn state)
+    {
+        var pawn = FindPawn(state.Id, state.Map);
         if (pawn is null || !pawn.Spawned) return;
         var cell = new IntVec3((int)state.X, 0, (int)state.Z);
         if (pawn.Position != cell) pawn.Position = cell;

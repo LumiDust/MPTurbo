@@ -138,6 +138,46 @@ internal static class HeadlessRuntime
     private static int framesSent;
     private static int lastFrameTick = -1;
 
+    private static readonly Dictionary<int, (int Map, int X, int Z, int Rotation, int Stack, int Hits)> lastThings = [];
+
+    /// <summary>Only objects that moved, changed stack, or took damage since the previous frame. The first
+    /// frame after a load establishes the baseline and sends nothing, because the replica already holds
+    /// the identical snapshot. Later frames also report objects that disappeared.</summary>
+    private static (List<ReplicaThing>? Changed, List<int>? Removed) DiffThings()
+    {
+        List<ReplicaThing>? changed = null;
+        var seen = new HashSet<int>();
+        foreach (var map in Find.Maps)
+        {
+            foreach (var thing in map.listerThings.AllThings)
+            {
+                if (thing is Pawn || thing.def.category is ThingCategory.Mote or ThingCategory.Ethereal) continue;
+                var id = thing.thingIDNumber;
+                seen.Add(id);
+                var current = (map.uniqueID, thing.Position.x, thing.Position.z, thing.Rotation.AsInt,
+                    thing.stackCount, thing.HitPoints);
+                if (lastThings.TryGetValue(id, out var previous) && previous == current) continue;
+                lastThings[id] = current;
+                if (baselineReady) (changed ??= []).Add(new ReplicaThing(id, current.Item1, current.Item2,
+                    current.Item3, current.Item4, current.Item5, current.Item6));
+            }
+        }
+        if (!baselineReady)
+        {
+            baselineReady = true;
+            return (null, null);
+        }
+        List<int>? removed = null;
+        foreach (var id in lastThings.Keys.Where(id => !seen.Contains(id)).ToList())
+        {
+            lastThings.Remove(id);
+            (removed ??= []).Add(id);
+        }
+        return (changed, removed);
+    }
+
+    private static bool baselineReady;
+
     private static void PublishFrame()
     {
         if (server is null || !SharedColony.Gating) return;
@@ -152,7 +192,8 @@ internal static class HeadlessRuntime
                     pawns.Add(new ReplicaPawn(pawn.thingIDNumber, map.uniqueID, pawn.Position.x, pawn.Position.z,
                         pawn.Rotation.AsInt, pawn.CurJobDef?.defName,
                         pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f));
-            var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns));
+            var (changed, removed) = DiffThings();
+            var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns, changed, removed));
             Interlocked.Add(ref framesSent, sent);
             Volatile.Write(ref lastFrameTick, tick);
             if (sent > 0 && (lastFrameLogTick < 0 || tick - lastFrameLogTick >= 600))
