@@ -57,6 +57,6 @@ public static class Diagnostics
         var target = AccessTools.Method(type, method);
         if (target == null) return label + "缺失";
         var info = Harmony.GetPatchInfo(target);
-        return info != null && info.Owners.Contains("yg.turbotick") ? label + "✓" : label + "✗";
+        return info != null && info.Owners.Contains("lumidust.turbotick") ? label + "✓" : label + "✗";
     }
 }

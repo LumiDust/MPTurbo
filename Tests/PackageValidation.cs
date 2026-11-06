@@ -15,7 +15,7 @@ static class PackageValidation
         void Require(bool valid, string text) { if (!valid) throw new Exception(text); }
         var about = XDocument.Load(Path.Combine(root, "About", "About.xml")).Root!;
         Require(about.Element("name")?.Value == "TurboTick", "canonical mod title");
-        Require(about.Element("packageId")?.Value == "yg.turbotick", "stable package identity");
+        Require(about.Element("packageId")?.Value == "lumidust.turbotick", "stable package identity");
         Require(about.Element("url")?.Value == "https://github.com/LumiDust/TurboTick", "canonical repository URL");
         var buildVersion = XDocument.Load(Path.Combine(root, "Directory.Build.props"))
             .Root!.Element("PropertyGroup")!.Element("Version")!.Value;

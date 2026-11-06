@@ -16,7 +16,7 @@ foreach ($file in @('About/About.xml', 'About/Preview.png', 'LoadFolders.xml', '
     if (-not (Test-Path (Join-Path $source $file) -PathType Leaf)) { throw "Missing $file; first run scripts/package.ps1." }
 }
 $about = [xml](Get-Content (Join-Path $source 'About/About.xml') -Raw)
-if ($about.ModMetaData.packageId -ne 'yg.turbotick' -or $about.ModMetaData.name -ne 'TurboTick') {
+if ($about.ModMetaData.packageId -ne 'lumidust.turbotick' -or $about.ModMetaData.name -ne 'TurboTick') {
     throw 'The source package is not the canonical TurboTick mod.'
 }
 $idPath = Join-Path $target 'About/PublishedFileId.txt'

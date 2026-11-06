@@ -11,7 +11,7 @@ public static class TickRatePatch
         var getter = AccessTools.PropertyGetter(typeof(TickManager), nameof(TickManager.TickRateMultiplier))
             ?? throw new MissingMethodException("RimWorld 1.7 TickManager.TickRateMultiplier");
         var info = Harmony.GetPatchInfo(getter);
-        if (info != null && info.Owners.Any(owner => owner != "yg.turbotick"))
+        if (info != null && info.Owners.Any(owner => owner != "lumidust.turbotick"))
             Log.Warning("[TurboTick] 倍率入口已有其他补丁；请核对兼容清单，运行兼容性尚未验证。");
         harmony.Patch(getter, postfix: new HarmonyMethod(typeof(TickRatePatch), nameof(Postfix)));
     }

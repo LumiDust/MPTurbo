@@ -21,7 +21,7 @@ pwsh scripts/prepare-workshop.ps1 -OutputDirectory "<游戏目录>/Mods/TurboTic
 
 ## 2. 核对发布材料
 
-- 名称：`TurboTick`；固定 packageId：`yg.turbotick`。
+- 名称：`TurboTick`；固定 packageId：`lumidust.turbotick`。
 - [About.xml](../About/About.xml) 声明版本 `0.4.0`、游戏版本 `1.7`、唯一依赖 Harmony；版本号与 [Directory.Build.props](https://github.com/LumiDust/TurboTick/blob/main/Directory.Build.props) 一致。
 - [LoadFolders.xml](../LoadFolders.xml) 加载根目录和 `1.7/`；三个自有 DLL 位于 `1.7/Assemblies/`。
 - 预览图 [Preview.png](../About/Preview.png) 已提供：640×360 PNG；图标 [ModIcon.png](../About/ModIcon.png) 为 64×64。

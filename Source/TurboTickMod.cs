@@ -36,7 +36,7 @@ public static class Bootstrap
         done = true;
         try
         {
-            TurboTickMod.Harmony = new Harmony("yg.turbotick");
+            TurboTickMod.Harmony = new Harmony("lumidust.turbotick");
             TickRatePatch.Install(TurboTickMod.Harmony);
             // Each gameplay patch is installed separately so one moved method cannot disable the rest.
             PatchInstaller.InstallAll(TurboTickMod.Harmony);
