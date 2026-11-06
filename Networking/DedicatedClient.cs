@@ -412,7 +412,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(sha256) || sha256.Length != 64) throw new ArgumentException("A full SHA256 hex string is required.", nameof(sha256));
         var session = ConnectedSession();
-        await session.Connection.WriteAsync(new WireMessage { Type = "ReportHash", Tick = tick, Sha256 = sha256, Categories = categories?.ToArray() }, session.Token).ConfigureAwait(false);
+        await session.Connection.WriteAsync(new WireMessage { Type = "ReportHash", Epoch = Interlocked.Read(ref session.Epoch), Tick = tick, Sha256 = sha256, Categories = categories?.ToArray() }, session.Token).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
     }
 

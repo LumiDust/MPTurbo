@@ -19,6 +19,19 @@ try
         await Throws<ArgumentOutOfRangeException>(() => Task.FromResult(new SpeedPolicy(Revision: -1)));
     });
 
+    await AdminVerification.RunAsync(root, Check);
+    var serverProgramIndex = Array.IndexOf(args, "--server-program");
+    if (serverProgramIndex >= 0)
+        await Check("server program password-file precedence, startup failures, help and output secrecy", () =>
+            AdminVerification.VerifyProgramAsync(args[serverProgramIndex + 1], root));
+    if (args.Contains("--admin-only"))
+    {
+        Console.WriteLine($"PASS: {passed} management verification groups.");
+        return 0;
+    }
+
+    await HeadlessVerification.RunAsync(root, Check);
+
     await using var server = new DedicatedServer(new ServerOptions(Port: 0, DataDirectory: Path.Combine(root, "server")));
     await server.StartAsync();
     var port = server.Port;

@@ -32,10 +32,15 @@ static async Task<int> RunAsync(string[] arguments)
                 Console.WriteLine("--host ADDRESS       Bind address (default 127.0.0.1)");
                 Console.WriteLine("--port PORT          TCP port (default 30572; 0 selects a free port)");
                 Console.WriteLine("--data DIRECTORY     Persistent state and snapshots (default Saved)");
-                Console.WriteLine("--game-version VER   1.7 locks to first complete 1.7.x peer, or specify exact version");
-                Console.WriteLine("--mod-hash HASH      Exact simulation hash; development locks to first peer");
+                Console.WriteLine("--game-version VER   Initial exact version, or 1.7 locks to first complete 1.7.x peer");
+                Console.WriteLine("--mod-hash HASH      Initial exact simulation hash; development locks to first peer");
+                Console.WriteLine("Persisted room compatibility locks take precedence over these initial values.");
                 Console.WriteLine("--controller-only    One server-assigned controller; transfers to the host when claimed");
                 Console.WriteLine("--import FILE        Import a local snapshot before accepting players");
+                Console.WriteLine("Management (same TCP port; independent password authentication):");
+                Console.WriteLine("TURBOTICK_ADMIN_PASSWORD_FILE  Password file, preferred over the password environment variable");
+                Console.WriteLine("TURBOTICK_ADMIN_PASSWORD       Password; unset/empty disables management");
+                Console.WriteLine("Password files remove terminal CR/LF only; unreadable/empty files fail startup.");
                 return 0;
             }
             if (argument == "--controller-only") { options = options with { EveryoneCanEdit = false }; continue; }
@@ -53,6 +58,27 @@ static async Task<int> RunAsync(string[] arguments)
                 default: throw new ArgumentException($"Unknown option: {argument}");
             }
         }
+
+        var passwordFile = Environment.GetEnvironmentVariable("TURBOTICK_ADMIN_PASSWORD_FILE");
+        string? adminPassword;
+        if (passwordFile is not null)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(passwordFile) || new FileInfo(passwordFile).Length > 16 * 1024)
+                    throw new IOException("Invalid management password file.");
+                adminPassword = (await File.ReadAllTextAsync(passwordFile)).TrimEnd('\r', '\n');
+                if (string.IsNullOrEmpty(adminPassword) || adminPassword.Length > 4096)
+                    throw new IOException("Invalid management password file.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                Console.Error.WriteLine($"Management password file could not be read or was invalid ({ex.GetType().Name}); startup stopped.");
+                return 2;
+            }
+        }
+        else adminPassword = Environment.GetEnvironmentVariable("TURBOTICK_ADMIN_PASSWORD");
+        options = options with { AdminPassword = adminPassword };
 
         using var shutdown = new CancellationTokenSource();
         ConsoleCancelEventHandler cancel = (_, signal) => { signal.Cancel = true; shutdown.Cancel(); };

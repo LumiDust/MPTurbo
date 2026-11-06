@@ -1,0 +1,27 @@
+[Unit]
+Description=TurboTick RimWorld headless simulation server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=turbotick
+Group=turbotick
+WorkingDirectory=/srv/turbotick/game
+EnvironmentFile=-/srv/turbotick/headless.env
+Environment=HOME=/srv/turbotick/headless-profile
+Environment=XDG_CONFIG_HOME=/srv/turbotick/headless-profile/.config
+Environment=TURBOTICK_HOST=0.0.0.0
+Environment=TURBOTICK_PORT=30572
+Environment=TURBOTICK_DATA=/srv/turbotick/headless-state
+ExecStart=/srv/turbotick/game/RimWorld -headless -turbotick-server -savedatafolder=/srv/turbotick/headless-profile
+KillSignal=SIGTERM
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

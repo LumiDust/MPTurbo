@@ -29,12 +29,15 @@ public static class TurboState
     {
         RoomConnection.Pump();
         NativeSpeedSync.ApplyConfirmed();
-        var tm = Find.TickManager;
-        if (Current.ProgramState != ProgramState.Playing || tm == null)
+        // Root.Update also pumps headless while the entry scene or a loading worker owns no Game.
+        // Find.TickManager dereferences Current.Game in 1.7, so test it before reading the accessor.
+        if (Current.ProgramState != ProgramState.Playing || Current.Game is null)
         {
             meter.Reset();
             return;
         }
+        var tm = Find.TickManager;
+        if (tm is null) { meter.Reset(); return; }
         // TicksGame is an actual completed-tick counter; MeanTickTime is only CPU cost/capacity.
         meter.Sample(tm.TicksGame, Clock.Now, tm.TickRateMultiplier);
         // Diagnostic only. Local auto-downshift would split a future shared simulation.

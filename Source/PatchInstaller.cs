@@ -53,6 +53,8 @@ public static class PatchInstaller
         Try(harmony, "wander-herd", typeof(HerdWanderRootDeterministicPatch));
         Try(harmony, "wander-dest", typeof(RandomWanderDestDeterministicPatch));
         Try(harmony, "effect-isolation", typeof(TurboEffectIsolation));
+        Try(harmony, "shared-tick-cadence", typeof(SharedTickCadence));
+        Try(harmony, "shared-path-requests", typeof(SharedPathRequests));
         if (SimulationDiagnostics.Enabled)
         {
             Try(harmony, "load-filth-trace", typeof(SharedFilthRemovalTracePatch));
@@ -94,6 +96,8 @@ public static class PatchInstaller
             && status.GetValueOrDefault("wander-herd")
             && status.GetValueOrDefault("wander-dest")
             && status.GetValueOrDefault("effect-isolation")
+            && status.GetValueOrDefault("shared-tick-cadence")
+            && status.GetValueOrDefault("shared-path-requests")
             && status.GetValueOrDefault("world-load")
             && status.GetValueOrDefault("world-load-failure")
             && status.GetValueOrDefault("native-controls")

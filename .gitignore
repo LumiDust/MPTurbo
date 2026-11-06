@@ -10,6 +10,8 @@
 Saved/
 **/Saved/
 artifacts/
+/secrets/
+.env
 *.part
 *.part.json
 

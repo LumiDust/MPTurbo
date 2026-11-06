@@ -19,6 +19,7 @@ public sealed class MultiplayerWindow : Window
     private Vector2 rosterScroll;
     private string error = "";
     private bool enteredRoom;
+    private bool chooseFreshWorld;
     private static readonly Color Background = new(0.055f, 0.075f, 0.095f, 1f);
     private static readonly Color Card = new(0.09f, 0.115f, 0.14f, 1f);
     private static readonly Color Accent = new(0.32f, 0.83f, 0.73f, 1f);
@@ -45,6 +46,13 @@ public sealed class MultiplayerWindow : Window
         Find.WindowStack.Add(new MultiplayerWindow());
     }
 
+    internal static void OpenAfterServerReset()
+    {
+        if (Find.WindowStack == null) return;
+        Find.WindowStack.WindowOfType<MultiplayerWindow>()?.Close();
+        Find.WindowStack.Add(new MultiplayerWindow { chooseFreshWorld = true, source = WorldSource.New, enteredRoom = true });
+    }
+
     public override void PostClose()
     {
         base.PostClose();
@@ -69,8 +77,9 @@ public sealed class MultiplayerWindow : Window
             Text.WordWrap = true;
             Widgets.DrawBoxSolid(inRect, Background);
             Widgets.DrawBoxSolid(new Rect(inRect.x, inRect.y, inRect.width, 3f), Accent);
-            Label(new Rect(22, 18, inRect.width - 70, 32), T("TurboTick_Multiplayer"), GameFont.Medium, Color.white);
-            Label(new Rect(22, 55, inRect.width - 44, 30), T("TurboTick_LobbySubtitle"), GameFont.Small, Muted);
+            Label(new Rect(22, 18, inRect.width - 240, 32), T("TurboTick_Multiplayer"), GameFont.Medium, Color.white);
+            if (Button(new Rect(inRect.width - 204, 17, 160, 34), T("TurboTick_ManageServer"))) ServerAdminWindow.Open();
+            Label(new Rect(22, 55, inRect.width - 44, 30), T(chooseFreshWorld ? "TurboTick_AdminResetComplete" : "TurboTick_LobbySubtitle"), GameFont.Small, Muted);
             var viewport = new Rect(18, 98, inRect.width - 36, inRect.height - 185);
             var body = new Rect(0, 0, Math.Max(720, viewport.width - 18), Math.Max(460, viewport.height - 18));
             Widgets.BeginScrollView(viewport, ref bodyScroll, body);
@@ -107,7 +116,7 @@ public sealed class MultiplayerWindow : Window
         DrawHostConfig(right);
         Label(new Rect(left.x + 16, left.y + 12, left.width - 32, 28), T("TurboTick_WorldSource"), GameFont.Small, Color.white);
         var y = left.y + 48;
-        if (Current.ProgramState == ProgramState.Playing)
+        if (Current.ProgramState == ProgramState.Playing && !chooseFreshWorld)
         {
             if (Choice(new Rect(left.x + 12, y, left.width - 24, 66), T("TurboTick_CurrentColony"),
                 T("TurboTick_CurrentColonyDesc"), source == WorldSource.Current)) source = WorldSource.Current;
@@ -199,20 +208,22 @@ public sealed class MultiplayerWindow : Window
         var x = area.x + 24;
         var width = area.width - 48;
         var detailWidth = width * 0.57f;
-        DrawRoster(new Rect(x + detailWidth + 20, area.y + 24, width - detailWidth - 20, area.height - 108));
-        Label(new Rect(x, area.y + 24, detailWidth, 40), T(MultiplayerHosting.Pending ? "TurboTick_PreparingRoom" : "TurboTick_RoomTitle"), GameFont.Medium, Accent);
+        var disconnected = !RoomConnection.Busy && RoomConnection.Client?.IsConnected != true;
+        if (!disconnected) DrawRoster(new Rect(x + detailWidth + 20, area.y + 24, width - detailWidth - 20, area.height - 108));
+        Label(new Rect(x, area.y + 24, detailWidth, 40), T(disconnected ? "TurboTick_RoomDisconnected"
+            : MultiplayerHosting.Pending ? "TurboTick_PreparingRoom" : "TurboTick_RoomTitle"), GameFont.Medium, Accent);
         Label(new Rect(x, area.y + 80, detailWidth, 54), RoomConnection.Status, GameFont.Small, Color.white);
         Label(new Rect(x, area.y + 146, detailWidth, 54), T("TurboTick_DedicatedRoomAddress", RoomConnection.Endpoint), GameFont.Small, Muted);
         if (Button(new Rect(x, area.y + 208, Math.Min(230, detailWidth), 32), T("TurboTick_CopyPort"), false, RoomConnection.Endpoint.Length > 0))
             GUIUtility.systemCopyBuffer = RoomConnection.Endpoint;
-        Label(new Rect(x, area.y + 254, detailWidth, 54), T(RoomConnection.Busy && RoomConnection.HostRequested ? "TurboTick_HostConnecting"
+        Label(new Rect(x, area.y + 254, detailWidth, 54), T(disconnected ? "TurboTick_RoomDisconnectedGuide"
+            : RoomConnection.Busy ? "TurboTick_RoomConnecting"
             : MultiplayerHosting.Pending ? "TurboTick_HostPublishing"
             : RoomConnection.IsHost && RoomConnection.Client?.PresenceEpoch >= 0 ? "TurboTick_ServerWorldContinues"
             : "TurboTick_WaitForHost"), GameFont.Small, Muted);
         if (SharedColony.Session.Phase == Simulation.SharedPhase.Faulted)
             Label(new Rect(x, area.y + 318, detailWidth, 65), T("TurboTick_SharedFault", SharedColony.Session.LastError), GameFont.Small, new Color(1f, 0.65f, 0.5f));
         var buttonsY = area.yMax - 56;
-        var disconnected = !RoomConnection.Busy && RoomConnection.Client?.IsConnected != true;
         if (Button(new Rect(x, buttonsY, width * 0.48f, 36), T(disconnected ? "TurboTick_Connect" : "TurboTick_BackToGame"), true,
             disconnected || Current.ProgramState == ProgramState.Playing && !MultiplayerHosting.Pending))
         {

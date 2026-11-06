@@ -40,7 +40,12 @@ public static class Bootstrap
             TickRatePatch.Install(TurboTickMod.Harmony);
             // Each gameplay patch is installed separately so one moved method cannot disable the rest.
             PatchInstaller.InstallAll(TurboTickMod.Harmony);
-            // GUI/update come from GameComponent; no redundant fallback patches.
+            if (HeadlessRuntime.Active)
+            {
+                TurboTickMod.Harmony.CreateClassProcessor(typeof(HeadlessUpdatePatch)).Patch();
+                HeadlessRuntime.Start();
+            }
+            // GUI/update come from GameComponent; headless also pumps from Root on the title screen.
         }
         catch (Exception error) { Log.Error("[TurboTick] 初始化失败：" + error); }
     }

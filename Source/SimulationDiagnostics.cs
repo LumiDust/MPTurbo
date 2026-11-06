@@ -8,6 +8,7 @@ namespace TurboTick;
 internal static class SimulationDiagnostics
 {
     private static readonly bool enabled = GenCommandLine.CommandLineArgPassed("turbotick-trace-ticks");
+    private static readonly bool hashes = enabled || GenCommandLine.CommandLineArgPassed("turbotick-trace-hashes");
     private static int faults;
     private static int removals;
     private static int detailedThrough = -1;
@@ -41,7 +42,7 @@ internal static class SimulationDiagnostics
 
     internal static void Hash(int tick, string hash, IReadOnlyList<string> categories)
     {
-        if (!enabled) return;
+        if (!hashes) return;
         Write(new { kind = "hash", logicalTick = tick, gameTick = Find.TickManager?.TicksGame,
             epoch = SharedColony.Session.Epoch, randomState = SimulationRandom.Capture().ToString("x16"), hash, categories });
     }
@@ -58,7 +59,7 @@ internal static class SimulationDiagnostics
     internal static void Boundary(string kind, string? worldId, bool arm = true)
     {
         if (!enabled) return;
-        if (arm) detailedThrough = SharedColony.Session.Barrier.AppliedTick + 450;
+        if (arm) detailedThrough = SharedColony.Session.Barrier.AppliedTick + 8;
         var rows = new List<object>();
         foreach (var map in Find.Maps)
         {

@@ -15,6 +15,8 @@ internal static class MultiplayerHosting
     private static string? expectedSave;
     private static bool expectNew;
     private static double armedAt;
+    private sealed record ResetReconnect(int ConnectionGeneration, TurboTickSettings Target);
+    private static ResetReconnect? resetReconnect;
     public static string Status { get; private set; } = "";
     public static bool Pending => stage != LaunchStage.None;
     public static bool IsHosting => RoomConnection.IsHost;
@@ -39,6 +41,18 @@ internal static class MultiplayerHosting
             || settings.PlayerName.Any(char.IsControl)) error = T("TurboTick_InvalidName");
         else { error = ""; return true; }
         return false;
+    }
+
+    internal static void ReconnectAfterServerReset(TurboTickSettings target)
+    {
+        // Native scenario setup belongs to the entry scene, never an abandoned live Game instance.
+        RoomConnection.Leave();
+        if (!GenScene.InEntryScene || Current.ProgramState != ProgramState.Entry) GenScene.GoToMainMenu();
+        // GoToMainMenu also leaves the room. Arm only afterwards, bound to that exact disconnected generation.
+        resetReconnect = new ResetReconnect(RoomConnection.SessionGeneration, new TurboTickSettings
+        {
+            ServerHost = target.ServerHost, ServerPort = target.ServerPort, PlayerName = target.PlayerName
+        });
     }
 
     public static bool Begin(FileInfo? save, bool newGame, bool useCurrent)
@@ -99,6 +113,16 @@ internal static class MultiplayerHosting
 
     public static void Update()
     {
+        if (resetReconnect is { } restart)
+        {
+            if (restart.ConnectionGeneration != RoomConnection.SessionGeneration) resetReconnect = null;
+            else if (GenScene.InEntryScene && Current.ProgramState == ProgramState.Entry && !LongEventHandler.AnyEventNowOrWaiting)
+            {
+                resetReconnect = null;
+                RoomConnection.Connect(restart.Target, asHost: true);
+                MultiplayerWindow.OpenAfterServerReset();
+            }
+        }
         if (!Pending) return;
         if (connectionGeneration != RoomConnection.SessionGeneration || !IsHosting)
         { Fail(T("TurboTick_HostConnectionLost")); return; }
@@ -141,6 +165,7 @@ internal static class MultiplayerHosting
 
     public static void Cancel()
     {
+        resetReconnect = null;
         generation++;
         stage = LaunchStage.None;
         expectedSave = null;

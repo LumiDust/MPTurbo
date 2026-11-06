@@ -6,7 +6,7 @@ namespace TurboTick.Networking;
 public static class NetworkProtocol
 {
     public const int Version = 4;
-    public const string ClientVersion = "0.5.0";
+    public const string ClientVersion = "0.5.1";
     public const int MaximumFrameLength = 4 * 1024 * 1024;
     public const int SnapshotChunkSize = 256 * 1024;
 }
@@ -40,7 +40,13 @@ public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, flo
 }
 
 public sealed record ModFingerprint(string PackageId, string ContentHash);
-public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = NetworkProtocol.ClientVersion);
+public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = NetworkProtocol.ClientVersion)
+{
+    /// <summary>Process-private simulation admission credential, supplied only by ConnectSimulationAsync.</summary>
+    public string? SimulationKey { get; init; }
+
+    public override string ToString() => $"ClientHello {{ PlayerName = {PlayerName}, GameVersion = {GameVersion}, ModHash = {ModHash}, ClientVersion = {ClientVersion} }}";
+}
 
 /// <summary>Transient, server-assigned room identity. Color is deterministic for the same player name,
 /// including reconnects; it never consumes the simulation random stream.</summary>
@@ -81,7 +87,17 @@ public static class PresenceRules
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
 public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0);
 public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 30572, string DataDirectory = "Saved",
-    string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true, int MaxHistory = 200_000);
+    string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true, int MaxHistory = 200_000,
+    string? AdminPassword = null)
+{
+    /// <summary>Keep the lockstep timeline behind the resident process simulation's reported progress.</summary>
+    public bool RequireSimulation { get; init; } = false;
+
+    // Options are routinely printed by hosts; never include the credential in the generated record text.
+    public override string ToString() => $"ServerOptions {{ Address = {Address}, Port = {Port}, AdminEnabled = {!string.IsNullOrEmpty(AdminPassword)} }}";
+}
+public sealed record ServerAdminStatus(bool GameRunning, int Tick, int PlayerCount, string? GameVersion, string? ModHash);
+public sealed record ServerResetResult(string BackupId);
 public sealed record SnapshotManifest(string Id, long Length, int ChunkSize, IReadOnlyList<string> ChunkHashes);
 public sealed record SnapshotChunk(string Id, int Index, byte[] Data, string Sha256);
 

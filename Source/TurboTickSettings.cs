@@ -44,7 +44,10 @@ public class TurboTickSettings : ModSettings
     {
         var listing = new Listing_Standard();
         listing.Begin(area);
-        if (Widgets.ButtonText(listing.GetRect(34f), T("TurboTick_OpenLobby"))) MultiplayerWindow.Open();
+        var entries = listing.GetRect(34f);
+        var entryWidth = (entries.width - 12f) / 2f;
+        if (Widgets.ButtonText(new Rect(entries.x, entries.y, entryWidth, 32f), T("TurboTick_OpenLobby"))) MultiplayerWindow.Open();
+        if (Widgets.ButtonText(new Rect(entries.x + entryWidth + 12f, entries.y, entryWidth, 32f), T("TurboTick_ManageServer"))) ServerAdminWindow.Open();
         listing.Label(T("TurboTick_Prototype"), 48f);
         ServerHost = Field(listing, T("TurboTick_Host"), ServerHost);
         ServerPort = Field(listing, T("TurboTick_Port"), ServerPort);

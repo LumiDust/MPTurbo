@@ -1,0 +1,362 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Runtime.InteropServices;
+using System.Text.Json;
+using HarmonyLib;
+using TurboTick.Networking;
+using TurboTick.Simulation;
+using Verse;
+
+namespace TurboTick;
+
+/// <summary>Owns the network authority and one permanent simulation peer. Verse work stays on the game
+/// thread; the protocol, snapshots and lockstep adapter are shared with the regular client.</summary>
+internal static class HeadlessRuntime
+{
+    internal static bool Active { get; } = Environment.GetCommandLineArgs()
+        .Any(a => a.Equals("-turbotick-server", StringComparison.OrdinalIgnoreCase));
+    private static readonly ConcurrentQueue<Action> pending = new();
+    private static DedicatedServer? server;
+    private static Task? startup;
+    private static Task? persistence;
+    private static Task? shutdown;
+    private static FileStream? directoryLock;
+    private static PosixSignalRegistration? terminate;
+    private static PosixSignalRegistration? interrupt;
+    private static string dataDirectory = "";
+    private static string? initialSave;
+    private static bool initialLoadRequested;
+    private static bool bootstrapStarted;
+    private static bool attached;
+    private static bool stopping;
+    private static bool finalized;
+    private static int stopRequested;
+    private static int exitCode;
+    private static float nextStatus;
+    private static float nextPersist;
+    private static float nextConnect;
+    private static float startedAt;
+    private static string state = "starting";
+    private static string? failure;
+    internal static bool StopRequested => Volatile.Read(ref stopRequested) != 0;
+    internal static bool HoldLocalTicks => Active && (!SharedColony.Gating || stopping);
+
+    internal static void Start()
+    {
+        if (!Active || startup is not null) return;
+        startedAt = Clock.Now;
+        try
+        {
+            if (!GenCommandLine.CommandLineArgPassed("headless"))
+                throw new ArgumentException("-turbotick-server requires -headless.");
+            if (!PatchInstaller.AllCritical || PatchInstaller.Status.Any(p => !p.Value))
+                throw new InvalidOperationException("Dedicated simulation requires every gameplay patch to be installed.");
+            dataDirectory = Path.GetFullPath(Option("data") ?? Path.Combine(GenFilePaths.SaveDataFolderPath, "TurboTickServer"));
+            Directory.CreateDirectory(dataDirectory);
+            directoryLock = new FileStream(Path.Combine(dataDirectory, "headless.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None);
+            initialSave = Option("save");
+            if (initialSave is not null && (initialSave.Length == 0 || initialSave != Path.GetFileNameWithoutExtension(initialSave)
+                || initialSave.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || initialSave.Contains('/') || initialSave.Contains('\\')))
+                throw new ArgumentException("TURBOTICK_SAVE must be a save name under the selected profile's Saves directory, without extension.");
+            var port = int.Parse(Option("port") ?? "30572", NumberStyles.None, CultureInfo.InvariantCulture);
+            if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException("port");
+            var inputs = CompatibilityManifest.Capture();
+            var export = Path.Combine(dataDirectory, "compatibility-manifest.json");
+            var host = Option("host") ?? "0.0.0.0";
+            var controllerOnly = Option("controller-only") is "true" or "1";
+            // Management uses the configured shared password independently of the player hosting role.
+            string? adminPassword = null;
+            var passwordFile = Environment.GetEnvironmentVariable("TURBOTICK_ADMIN_PASSWORD_FILE");
+            if (passwordFile is not null)
+            {
+                if (string.IsNullOrWhiteSpace(passwordFile) || new FileInfo(passwordFile).Length > 16 * 1024)
+                    throw new IOException("Invalid management password file.");
+                adminPassword = File.ReadAllText(passwordFile).TrimEnd('\r', '\n');
+                if (string.IsNullOrEmpty(adminPassword) || adminPassword.Length > 4096)
+                    throw new IOException("Invalid management password file.");
+            }
+            else adminPassword = Environment.GetEnvironmentVariable("TURBOTICK_ADMIN_PASSWORD");
+            TurboTickMod.Settings.autoRecover = false; // Resident faults hold the authoritative timeline for diagnosis.
+            Waylith.EngineApplication.Instance.OnShutdown += Shutdown;
+            Console.CancelKeyPress += OnCancel;
+            if (!OperatingSystem.IsWindows())
+            {
+                terminate = PosixSignalRegistration.Create(PosixSignal.SIGTERM, OnSignal);
+                interrupt = PosixSignalRegistration.Create(PosixSignal.SIGINT, OnSignal);
+            }
+            startup = Task.Run(async () =>
+            {
+                DedicatedServer? candidate = null;
+                try
+                {
+                    var hello = CompatibilityManifest.Build(inputs, "DedicatedSimulation", export, CancellationToken.None);
+                    candidate = new DedicatedServer(new ServerOptions(host, port, dataDirectory, hello.GameVersion,
+                        hello.ModHash, !controllerOnly, AdminPassword: adminPassword) { RequireSimulation = true });
+                    await candidate.StartAsync().ConfigureAwait(false);
+                    // A persisted room from another modpack must not be silently overwritten or simulated.
+                    if (candidate.LockedGameVersion != hello.GameVersion || candidate.LockedModHash != hello.ModHash)
+                        throw new InvalidDataException("Persisted room differs from the installed game/modpack. Restore the matching pack or archive the room before starting.");
+                    var ready = candidate;
+                    pending.Enqueue(() =>
+                    {
+                        server = ready;
+                        state = ready.GameRunning ? "restoring" : "lobby";
+                        Log.Message($"[TurboTick headless] listening on {host}:{ready.Port}; protocol={NetworkProtocol.Version}; game={hello.GameVersion}");
+                        ConnectSimulation();
+                    });
+                }
+                catch (Exception error)
+                {
+                    if (candidate is not null) await candidate.DisposeAsync().ConfigureAwait(false);
+                    pending.Enqueue(() => Fail("Startup", error));
+                }
+            });
+        }
+        catch (Exception error) { Fail("Configuration", error); }
+    }
+
+    internal static Task ConnectSimulationAsync(DedicatedClient client, ClientHello hello, CancellationToken ct) =>
+        (server ?? throw new InvalidOperationException("The embedded server has not started.")).ConnectSimulationAsync(client, hello, ct);
+
+    private static void ConnectSimulation()
+    {
+        if (server is null || stopping) return;
+        RoomConnection.Connect(new TurboTickSettings
+        {
+            ServerHost = "127.0.0.1", ServerPort = server.Port.ToString(CultureInfo.InvariantCulture),
+            PlayerName = "DedicatedSimulation", showHud = false, showPlayerCursors = false, autoConnect = false
+        }, simulation: true);
+        nextConnect = Clock.Now + 10;
+    }
+
+    internal static void Update()
+    {
+        if (!Active) return;
+        while (pending.TryDequeue(out var action))
+            try { action(); } catch (Exception error) { Fail("Game thread", error); }
+        if (shutdown?.IsCompleted == true)
+        {
+            if (shutdown.IsFaulted) { failure = "Shutdown persistence failed"; exitCode = 1; Log.Error("[TurboTick headless] " + shutdown.Exception); }
+            FinishExit();
+            return;
+        }
+        if (server is null)
+        {
+            if (Volatile.Read(ref stopRequested) != 0 && startup?.IsCompleted != false) FinishExit();
+            return;
+        }
+        if (stopping) return;
+        if (RoomConnection.Client?.IsConnected == true)
+        {
+            attached = true;
+            if (!server.GameRunning && initialSave is not null && !initialLoadRequested && !RoomConnection.Busy
+                && !LongEventHandler.AnyEventNowOrWaiting)
+            {
+                initialLoadRequested = true;
+                if (!File.Exists(GenFilePaths.FilePathForSavedGame(initialSave)))
+                    Fail("Initial save", new FileNotFoundException("Configured save does not exist under Saves/."));
+                else GameDataSaveLoader.LoadGame(initialSave);
+            }
+        }
+        else if (!RoomConnection.Busy && Clock.Now >= nextConnect)
+        {
+            if (!attached && Clock.Now - startedAt > 60)
+                Fail("Simulation attach", new InvalidOperationException(RoomConnection.Status));
+            else ConnectSimulation();
+        }
+        ReportProgress();
+        var phase = SharedColony.Session.Phase;
+        if (phase == SharedPhase.Faulted)
+        {
+            state = "faulted";
+            // Never run a local fallback or publish a divergent world after a failed load/hash.
+            failure = SharedColony.Session.LastError;
+        }
+        else if (server.GameRunning) state = phase == SharedPhase.Playing ? "playing" : "restoring";
+        else state = initialLoadRequested ? "loading-initial-save" : "lobby";
+        if (Clock.Now >= nextStatus)
+        {
+            nextStatus = Clock.Now + 2;
+            WriteStatus();
+        }
+        if (Clock.Now >= nextPersist && persistence?.IsCompleted != false)
+        {
+            if (persistence?.IsFaulted == true) Fail("Periodic persistence", persistence.Exception!);
+            nextPersist = Clock.Now + 10;
+            persistence = server.PersistAsync();
+        }
+        if (Volatile.Read(ref stopRequested) != 0 && !RoomConnection.CheckpointBusy && !LongEventHandler.AnyEventNowOrWaiting
+            && Scribe.mode == LoadSaveMode.Inactive) BeginStop();
+    }
+
+    internal static void ReportProgress()
+    {
+        if (!Active || server is null) return;
+        server.ReportSimulationProgress(SharedColony.Session.Epoch, SharedColony.Session.Barrier.AppliedTick,
+            !stopping && Volatile.Read(ref stopRequested) == 0 && SharedColony.Gating
+            && TurboState.Authority.SessionConnected && RoomConnection.Client?.IsConnected == true
+            && (server.RequiredSimulationWorldId is not { } required || SharedColony.Session.WorldId == required));
+    }
+
+    internal static void GameReady(Game game, string? saveName, bool newGame)
+    {
+        if (!Active || server is null || server.GameRunning || bootstrapStarted) return;
+        // -quicktest is an explicit local acceptance fixture; normal servers wait for a client publication.
+        if (!(initialLoadRequested && saveName == initialSave) && !(newGame && GenCommandLine.CommandLineArgPassed("quicktest"))) return;
+        bootstrapStarted = true;
+        LongEventHandler.ExecuteWhenFinished(() =>
+        {
+            if (!ReferenceEquals(Current.Game, game) || server is null || server.GameRunning) return;
+            try
+            {
+                state = "publishing-initial-world";
+                var bytes = File.ReadAllBytes(WorldFiles.SaveCurrentGame());
+                var manifest = WorldFiles.Describe(bytes);
+                var inputs = CompatibilityManifest.Capture();
+                var owner = server;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        var hello = CompatibilityManifest.Build(inputs, "ServerBootstrap",
+                            Path.Combine(dataDirectory, "bootstrap-manifest.json"), CancellationToken.None);
+                        await using var publisher = new DedicatedClient();
+                        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                        await publisher.ConnectAsync("127.0.0.1", owner.Port, hello, timeout.Token).ConfigureAwait(false);
+                        await publisher.ClaimHostAsync(timeout.Token).ConfigureAwait(false);
+                        using var stream = new MemoryStream(bytes, writable: false);
+                        await publisher.UploadWorldAsync(manifest, stream, timeout.Token).ConfigureAwait(false);
+                        await publisher.StartGameAsync(timeout.Token).ConfigureAwait(false);
+                        pending.Enqueue(() => Log.Message("[TurboTick headless] initial world accepted; loading the canonical snapshot."));
+                    }
+                    catch (Exception error) { pending.Enqueue(() => Fail("Initial publication", error)); }
+                });
+            }
+            catch (Exception error) { Fail("Initial snapshot", error); }
+        });
+    }
+
+    private static void BeginStop()
+    {
+        stopping = true;
+        state = "stopping";
+        ReportProgress();
+        // Stop granting new timeline ticks, then consume its last small watermark before checkpointing.
+        if (SharedColony.Gating && Find.TickManager is { } manager)
+        {
+            SharedColony.OnTick(server!.Tick);
+            var budget = 64;
+            while (SharedColony.Session.Barrier.CanAdvance && budget-- > 0 && !manager.Paused)
+                manager.DoSingleTick();
+            SharedColony.ApplyDue();
+        }
+        var checkpoint = SharedColony.Gating && RoomConnection.IsCheckpointOwner
+            ? RoomConnection.PublishCheckpointAsync(SharedColony.Session.Barrier.AppliedTick) : Task.FromResult(true);
+        var owner = server!;
+        shutdown = Task.Run(async () =>
+        {
+            try
+            {
+                if (!await checkpoint.WaitAsync(TimeSpan.FromSeconds(30)).ConfigureAwait(false))
+                    throw new IOException("Final world checkpoint failed; previous durable checkpoint retained.");
+                await owner.PersistAsync().ConfigureAwait(false);
+            }
+            finally { await owner.DisposeAsync().ConfigureAwait(false); }
+        });
+        WriteStatus();
+    }
+
+    internal static void Shutdown()
+    {
+        if (!Active || finalized) return;
+        finalized = true;
+        // Normal termination is requested via SIGTERM/Ctrl+C and completed on the game thread above.
+        // Root.Shutdown is also called by the engine; do not perform Verse I/O on a signal thread.
+        if (server is not null && shutdown is null)
+        {
+            Interlocked.Exchange(ref stopRequested, 1);
+            ReportProgress();
+            try { RoomConnection.PendingCheckpoint.WaitAsync(TimeSpan.FromSeconds(30)).GetAwaiter().GetResult(); }
+            catch (Exception error) { exitCode = 1; Log.Error("[TurboTick headless] pending checkpoint: " + error); }
+            BeginStop();
+        }
+        // The engine also handles SIGTERM. Its shutdown callback must join a flush that Update may
+        // already have started, otherwise socket cancellation races the final checkpoint commit.
+        try { shutdown?.WaitAsync(TimeSpan.FromSeconds(40)).GetAwaiter().GetResult(); }
+        catch (Exception error) { exitCode = 1; Log.Error("[TurboTick headless] " + error); }
+        state = exitCode == 0 ? "stopped" : "failed";
+        WriteStatus();
+        Waylith.EngineApplication.Instance.ExitCode = exitCode;
+        ConsoleCancelCleanup();
+        RoomConnection.Leave();
+        directoryLock?.Dispose();
+    }
+
+    private static void FinishExit()
+    {
+        state = exitCode == 0 ? "stopped" : "failed";
+        WriteStatus();
+        Log.Message("[TurboTick headless] " + state);
+        terminate?.Dispose();
+        interrupt?.Dispose();
+        Console.CancelKeyPress -= OnCancel;
+        directoryLock?.Dispose();
+        // A complete final checkpoint and protocol flush precede process exit. No UI prompt in a service.
+        Environment.Exit(exitCode);
+    }
+
+    private static void ConsoleCancelCleanup()
+    {
+        Console.CancelKeyPress -= OnCancel;
+        terminate?.Dispose();
+        interrupt?.Dispose();
+    }
+
+    private static void OnCancel(object? sender, ConsoleCancelEventArgs args) { args.Cancel = true; Interlocked.Exchange(ref stopRequested, 1); }
+    private static void OnSignal(PosixSignalContext context) { context.Cancel = true; Interlocked.Exchange(ref stopRequested, 1); }
+    private static void Fail(string stage, Exception error)
+    {
+        failure = stage + ": " + error.GetType().Name + ": " + error.Message;
+        exitCode = 1;
+        state = "failed";
+        Log.Error("[TurboTick headless] " + failure);
+        Interlocked.Exchange(ref stopRequested, 1);
+    }
+    private static string? Option(string name)
+    {
+        if (GenCommandLine.TryGetCommandLineArg("turbotick-" + name, out var value)) return value;
+        return Environment.GetEnvironmentVariable("TURBOTICK_" + name.Replace('-', '_').ToUpperInvariant());
+    }
+    private static void WriteStatus()
+    {
+        if (dataDirectory.Length == 0) return;
+        try
+        {
+            var path = Path.Combine(dataDirectory, "headless-status.json");
+            File.WriteAllText(path + ".tmp", JsonSerializer.Serialize(new
+            {
+                utc = DateTime.UtcNow, pid = Environment.ProcessId, state, failure,
+                port = server?.Port, protocol = NetworkProtocol.Version, clientVersion = NetworkProtocol.ClientVersion,
+                epoch = server?.Epoch, serverTick = server?.Tick, appliedTick = SharedColony.Session.Barrier.AppliedTick,
+                gameTick = Current.ProgramState == ProgramState.Playing && Current.Game is not null ? Find.TickManager?.TicksGame : null,
+                phase = SharedColony.Session.Phase.ToString(), checkpointTick = server?.CheckpointTick,
+                connected = RoomConnection.Client?.IsConnected == true, modHash = server?.LockedModHash
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            File.Move(path + ".tmp", path, overwrite: true);
+        }
+        catch (Exception error) { Log.Warning("[TurboTick headless] status: " + error.GetType().Name); }
+    }
+}
+
+[HarmonyPatch(typeof(Root), nameof(Root.Update))]
+internal static class HeadlessUpdatePatch
+{
+    private static void Postfix()
+    {
+        if (!HeadlessRuntime.Active) return;
+        TurboState.Update();
+        SharedColony.Update();
+        HeadlessRuntime.Update();
+    }
+}

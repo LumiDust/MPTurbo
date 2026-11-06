@@ -115,4 +115,36 @@
   <TurboTick_HudPlayers>玩家</TurboTick_HudPlayers>
   <TurboTick_HudRoom>房间</TurboTick_HudRoom>
   <TurboTick_HudOnMap>地图中</TurboTick_HudOnMap>
+  <TurboTick_ManageServer>管理服务器</TurboTick_ManageServer>
+  <TurboTick_AdminGuide>使用服务器管理密码查看状态或归档重开。即使普通连接因游戏版本或模组不同而失败，也可在这里管理服务器。</TurboTick_AdminGuide>
+  <TurboTick_AdminPassword>管理密码</TurboTick_AdminPassword>
+  <TurboTick_AdminCredentialsChanged>请认证当前服务器。密码仅在本窗口中保留，关闭窗口后清除。</TurboTick_AdminCredentialsChanged>
+  <TurboTick_AdminAuthenticate>密码认证</TurboTick_AdminAuthenticate>
+  <TurboTick_AdminRetry>重新认证／重试</TurboTick_AdminRetry>
+  <TurboTick_AdminRefresh>刷新服务器状态</TurboTick_AdminRefresh>
+  <TurboTick_AdminWorldRunning>当前有运行中的殖民地</TurboTick_AdminWorldRunning>
+  <TurboTick_AdminWorldEmpty>当前没有运行中的殖民地</TurboTick_AdminWorldEmpty>
+  <TurboTick_AdminTickPlayers>进度：tick {0} · 在线：{1} 人</TurboTick_AdminTickPlayers>
+  <TurboTick_AdminVersion>游戏版本：{0}</TurboTick_AdminVersion>
+  <TurboTick_AdminFingerprint>模组指纹：{0}</TurboTick_AdminFingerprint>
+  <TurboTick_AdminReset>归档当前局并重开</TurboTick_AdminReset>
+  <TurboTick_AdminUnauthenticated>输入地址、端口与管理密码并认证后，可查看服务器状态和重开当前局。</TurboTick_AdminUnauthenticated>
+  <TurboTick_AdminConnecting>正在认证管理密码并读取服务器状态…</TurboTick_AdminConnecting>
+  <TurboTick_AdminAuthenticated>管理密码认证成功。重开前请确认所有玩家已知晓。</TurboTick_AdminAuthenticated>
+  <TurboTick_AdminRefreshing>正在刷新服务器状态…</TurboTick_AdminRefreshing>
+  <TurboTick_AdminConfirmReset>确定要归档并重开服务器 {0} 吗？\n\n旧局会归档保留，所有在线玩家都会断开连接。服务器将使用你当前启用的游戏版本、DLC 和模组组合。\n\n本机会返回主菜单的多人大厅；若有需要保留的本地单人进度，请先保存。完成后将重新连接并申请主持，由你选择已有存档或新建殖民地。</TurboTick_AdminConfirmReset>
+  <TurboTick_AdminResetting>正在核对当前游戏内容并归档重开，请稍候…</TurboTick_AdminResetting>
+  <TurboTick_AdminResetComplete>服务器已归档重开。取得主持身份后，请重新选择存档或新建殖民地。</TurboTick_AdminResetComplete>
+  <TurboTick_AdminManifestFailed>读取当前游戏与模组信息失败。请检查当前模组配置后重试。</TurboTick_AdminManifestFailed>
+  <TurboTick_AdminCancelled>房间连接已变化，本次管理操作已取消。请重新认证目标服务器。</TurboTick_AdminCancelled>
+  <TurboTick_AdminRateLimited>管理认证尝试过于频繁。请稍候，再点击重新认证。</TurboTick_AdminRateLimited>
+  <TurboTick_AdminDisabled>该服务器尚未启用密码管理。请由服务器维护者设置管理密码，再点击重新认证。</TurboTick_AdminDisabled>
+  <TurboTick_AdminAuthenticationFailed>管理密码不正确。请核对后重新认证。</TurboTick_AdminAuthenticationFailed>
+  <TurboTick_AdminUnsupported>该服务器版本尚不支持此管理入口。请由维护者更新服务器，再重试。</TurboTick_AdminUnsupported>
+  <TurboTick_AdminTimeout>服务器响应超时。请重新认证并刷新状态，确认归档结果后再重试。</TurboTick_AdminTimeout>
+  <TurboTick_AdminConnectionFailed>管理连接中断或未完成。请检查服务器地址、端口及服务状态后重试；较旧的服务器可能需要更新。</TurboTick_AdminConnectionFailed>
+  <TurboTick_AdminUnknown>尚未锁定</TurboTick_AdminUnknown>
+  <TurboTick_RoomDisconnected>房间连接已断开</TurboTick_RoomDisconnected>
+  <TurboTick_RoomDisconnectedGuide>当前尚未连接房间。请重连，或从上方“管理服务器”检查并重开服务器。</TurboTick_RoomDisconnectedGuide>
+  <TurboTick_RoomConnecting>正在连接专用服务器，请稍候…</TurboTick_RoomConnecting>
 </LanguageData>

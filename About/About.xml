@@ -4,7 +4,7 @@
   <name>TurboTick</name>
   <author>丿和光同尘</author>
   <url>https://github.com/LumiDust/TurboTick</url>
-  <modVersion>0.5.0</modVersion>
+  <modVersion>0.5.1</modVersion>
   <supportedVersions><li>1.7</li></supportedVersions>
   <description>TurboTick — RimWorld 1.7 共享殖民地联机 Mod。
 
@@ -12,7 +12,9 @@
 
 支持共同操作同步、原生暂停与速度控制、快照续传和检查点。游戏内的可折叠玩家面板显示身份、延迟和同步状态；同一地图显示其他玩家的彩色指针与名字。
 
-仅支持 1.7（Waylith 引擎）。客户端需要 Harmony；客户端与专服请配套更新至 0.5.0（协议 v4）。专服支持 .NET 10 或 Docker 镜像独立运行。
+一台专服同时运行一局。当前房主负责发布初始存档；配置管理共享密码后可独立认证并归档重开，不绑定首次创建者的永久所有权。
+
+仅支持 1.7（Waylith 引擎）。客户端需要 Harmony；客户端与专服请配套更新至 0.5.1（协议 v4）。可用 SteamCMD 准备游戏文件，以 headless 模式托管常驻模拟及检查点；也保留原有 .NET 10 网络服务器。
 
 项目主页与安装说明：https://github.com/LumiDust/TurboTick</description>
   <modDependencies>

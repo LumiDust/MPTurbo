@@ -76,7 +76,7 @@ public static class SharedColony
     /// </summary>
     public static void CatchUpTick()
     {
-        if (catchingUp || !Gating || TurboState.Authority.IsHeld
+        if (HeadlessRuntime.HoldLocalTicks || catchingUp || !Gating || TurboState.Authority.IsHeld
             || TurboState.Authority.Current.TimeSpeed == 0 || Find.TickManager?.Paused == true
             || Find.TickManager?.slower?.ForcedNormalSpeed == true) return;
         var steps = CatchUpPlan.Steps(Session.Barrier.Backlog);
@@ -112,6 +112,7 @@ public static class SharedColony
             return;
         }
         OnLocalTick();
+        HeadlessRuntime.ReportProgress();
     }
 
     internal static void SkipTick() => tickGuard.Cancel();
@@ -128,7 +129,8 @@ public static class SharedColony
         if (!Gating) return;
         ApplyDue();
         if (Session.Barrier.AppliedTick % 60 == 0) ReportHash();
-        if (RoomConnection.IsCheckpointOwner && Session.Barrier.AppliedTick - lastCheckpointTick >= CheckpointInterval)
+        if (RoomConnection.IsCheckpointOwner && !HeadlessRuntime.StopRequested
+            && Session.Barrier.AppliedTick - lastCheckpointTick >= CheckpointInterval)
         {
             lastCheckpointTick = Session.Barrier.AppliedTick;
             RoomConnection.PublishCheckpoint(lastCheckpointTick);
@@ -310,6 +312,7 @@ internal static class TickGatePatch
     private static bool Prefix()
     {
         if (Current.ProgramState != ProgramState.Playing) return true;
+        if (HeadlessRuntime.HoldLocalTicks) return false;
         return SharedColony.MayAdvanceTick();
     }
 

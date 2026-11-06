@@ -115,4 +115,36 @@
   <TurboTick_HudPlayers>Players</TurboTick_HudPlayers>
   <TurboTick_HudRoom>Room</TurboTick_HudRoom>
   <TurboTick_HudOnMap>On map</TurboTick_HudOnMap>
+  <TurboTick_ManageServer>Manage server</TurboTick_ManageServer>
+  <TurboTick_AdminGuide>Use the server administration password to check its status or archive and restart. This remains available when the normal connection fails because game versions or mods differ.</TurboTick_AdminGuide>
+  <TurboTick_AdminPassword>Administration password</TurboTick_AdminPassword>
+  <TurboTick_AdminCredentialsChanged>Authenticate this server. The password stays in this window only and is cleared when you close it.</TurboTick_AdminCredentialsChanged>
+  <TurboTick_AdminAuthenticate>Authenticate password</TurboTick_AdminAuthenticate>
+  <TurboTick_AdminRetry>Authenticate / retry</TurboTick_AdminRetry>
+  <TurboTick_AdminRefresh>Refresh server status</TurboTick_AdminRefresh>
+  <TurboTick_AdminWorldRunning>A colony is currently running</TurboTick_AdminWorldRunning>
+  <TurboTick_AdminWorldEmpty>No colony is currently running</TurboTick_AdminWorldEmpty>
+  <TurboTick_AdminTickPlayers>Progress: tick {0} · Online: {1} players</TurboTick_AdminTickPlayers>
+  <TurboTick_AdminVersion>Game version: {0}</TurboTick_AdminVersion>
+  <TurboTick_AdminFingerprint>Mod fingerprint: {0}</TurboTick_AdminFingerprint>
+  <TurboTick_AdminReset>Archive colony and restart</TurboTick_AdminReset>
+  <TurboTick_AdminUnauthenticated>Enter the address, port and administration password, then authenticate to view the server status and restart its colony.</TurboTick_AdminUnauthenticated>
+  <TurboTick_AdminConnecting>Authenticating password and reading server status...</TurboTick_AdminConnecting>
+  <TurboTick_AdminAuthenticated>Administration password accepted. Let all players know before restarting.</TurboTick_AdminAuthenticated>
+  <TurboTick_AdminRefreshing>Refreshing server status...</TurboTick_AdminRefreshing>
+  <TurboTick_AdminConfirmReset>Archive and restart server {0}?\n\nThe old colony will be archived and every online player will be disconnected. The server will use your currently enabled game version, DLC and mod combination.\n\nThis client will return to the main-menu multiplayer lobby. Save any local single-player progress you want to keep first. You will reconnect and request the host role, then choose a saved colony or create a new one.</TurboTick_AdminConfirmReset>
+  <TurboTick_AdminResetting>Checking current game content, archiving and restarting. Please wait...</TurboTick_AdminResetting>
+  <TurboTick_AdminResetComplete>Server archived and restarted. Once the host role is granted, choose a saved colony or create a new one.</TurboTick_AdminResetComplete>
+  <TurboTick_AdminManifestFailed>Could not read the current game and mod information. Check the active mod configuration and retry.</TurboTick_AdminManifestFailed>
+  <TurboTick_AdminCancelled>The room connection changed and this administration operation was cancelled. Authenticate the intended server again.</TurboTick_AdminCancelled>
+  <TurboTick_AdminRateLimited>Too many administration authentication attempts. Wait a moment, then authenticate again.</TurboTick_AdminRateLimited>
+  <TurboTick_AdminDisabled>Password administration is not enabled on this server. Ask its maintainer to set an administration password, then retry.</TurboTick_AdminDisabled>
+  <TurboTick_AdminAuthenticationFailed>The administration password is incorrect. Check it and authenticate again.</TurboTick_AdminAuthenticationFailed>
+  <TurboTick_AdminUnsupported>This server version does not support this management window yet. Ask its maintainer to update the server, then retry.</TurboTick_AdminUnsupported>
+  <TurboTick_AdminTimeout>The server response timed out. Authenticate and refresh its status to check the archive result before retrying.</TurboTick_AdminTimeout>
+  <TurboTick_AdminConnectionFailed>The administration connection was interrupted or did not complete. Check the address, port and server, then retry. Older servers may need an update.</TurboTick_AdminConnectionFailed>
+  <TurboTick_AdminUnknown>Not set yet</TurboTick_AdminUnknown>
+  <TurboTick_RoomDisconnected>Room disconnected</TurboTick_RoomDisconnected>
+  <TurboTick_RoomDisconnectedGuide>You are not connected to this room. Reconnect, or use Manage server above to check and restart the server.</TurboTick_RoomDisconnectedGuide>
+  <TurboTick_RoomConnecting>Connecting to the dedicated server. Please wait...</TurboTick_RoomConnecting>
 </LanguageData>

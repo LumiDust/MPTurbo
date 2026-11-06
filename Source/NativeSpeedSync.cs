@@ -64,7 +64,7 @@ public static class NativeSpeedSync
 
     public static void ApplyConfirmed()
     {
-        if (!TurboState.Authority.SessionConnected || Current.ProgramState != ProgramState.Playing
+        if (!TurboState.Authority.SessionConnected || Current.ProgramState != ProgramState.Playing || Current.Game is null
             || Scribe.mode != LoadSaveMode.Inactive || Find.TickManager is not { } manager) return;
         var policy = TurboState.Authority.Current;
         if (ReferenceEquals(appliedManager, manager) && appliedRevision == policy.Revision) return;

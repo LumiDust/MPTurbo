@@ -58,6 +58,7 @@ internal static class MultiplayerEntryUpdate
 {
     private static void Postfix()
     {
+        if (HeadlessRuntime.Active) return;
         RoomConnection.Pump();
         MultiplayerHosting.Update();
     }
@@ -66,11 +67,18 @@ internal static class MultiplayerEntryUpdate
 [HarmonyPatch(typeof(GenScene), nameof(GenScene.GoToMainMenu))]
 internal static class MultiplayerReturnToMenu
 {
-    private static void Prefix() => RoomConnection.Leave();
+    private static void Prefix()
+    {
+        if (!HeadlessRuntime.Active) RoomConnection.Leave();
+    }
 }
 
 [HarmonyPatch(typeof(Root), nameof(Root.Shutdown))]
 internal static class MultiplayerShutdown
 {
-    private static void Prefix() => RoomConnection.Leave();
+    private static void Prefix()
+    {
+        if (HeadlessRuntime.Active) HeadlessRuntime.Shutdown();
+        else RoomConnection.Leave();
+    }
 }

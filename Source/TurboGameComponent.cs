@@ -47,22 +47,31 @@ public class TurboGameComponent : GameComponent
         {
             SharedColony.ScheduleWorldLoaded(ownerGame, WorldLoadScope.CurrentSave,
                 hasRandomState ? savedRandomState : null, stableSnapshotIds);
-            MultiplayerHosting.GameReady(ownerGame, WorldLoadScope.CurrentSave, newGame: false);
+            if (HeadlessRuntime.Active) HeadlessRuntime.GameReady(ownerGame, WorldLoadScope.CurrentSave, newGame: false);
+            else MultiplayerHosting.GameReady(ownerGame, WorldLoadScope.CurrentSave, newGame: false);
         }
     }
 
     public override void StartedNewGame()
     {
         if (!TurboState.Authority.SessionRequested) TurboState.InitializeLocal(TurboTickMod.Settings);
-        if (ownerGame is not null) MultiplayerHosting.GameReady(ownerGame, null, newGame: true);
+        if (ownerGame is not null)
+        {
+            if (HeadlessRuntime.Active) HeadlessRuntime.GameReady(ownerGame, null, newGame: true);
+            else MultiplayerHosting.GameReady(ownerGame, null, newGame: true);
+        }
     }
 
     public override void GameComponentUpdate()
     {
+        if (HeadlessRuntime.Active) return; // Root.Update pumps exactly once, including the lobby.
         TurboState.Update();
         MultiplayerHosting.Update();
         RoomConnection.AutoConnectOnce();
         SharedColony.Update();
     }
-    public override void GameComponentOnGUI() => TurboHud.Draw();
+    public override void GameComponentOnGUI()
+    {
+        if (!HeadlessRuntime.Active) TurboHud.Draw();
+    }
 }

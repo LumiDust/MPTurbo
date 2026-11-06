@@ -6,7 +6,7 @@ using System.Threading.Channels;
 namespace TurboTick.Networking;
 
 /// <summary>A standalone authority for compatibility, roles, rate policies, and snapshot downloads.</summary>
-public sealed class DedicatedServer : IAsyncDisposable
+public sealed partial class DedicatedServer : IAsyncDisposable
 {
     private readonly ServerOptions _options;
     private readonly string _statePath;
@@ -24,6 +24,8 @@ public sealed class DedicatedServer : IAsyncDisposable
     private long? _controllerId;
     private long? _hostId; // A room host exists only after an explicit successful ClaimHost.
     private long _nextPeer;
+    private long _roomGeneration;
+    private string? _snapshotStoreId;
     private int _port;
     private int _disposed;
 
@@ -69,7 +71,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         get
         {
             var world = WorldManifest;
-            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id);
+            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick);
         }
     }
 
@@ -82,13 +84,14 @@ public sealed class DedicatedServer : IAsyncDisposable
     public bool GameRunning => Volatile.Read(ref _gameRunning) != 0;
 
     private sealed record SavedState(SpeedPolicy Policy, string? GameVersion, string? ModHash,
-        SessionInfo? Session = null, List<GameCommand>? History = null, bool HistoryTruncated = false, SnapshotManifest? World = null);
+        SessionInfo? Session = null, List<GameCommand>? History = null, bool HistoryTruncated = false, SnapshotManifest? World = null,
+        string? SnapshotStoreId = null, SnapshotManifest? Checkpoint = null, int CheckpointTick = 0);
 
     public int Port => Volatile.Read(ref _port);
     public SpeedPolicy CurrentPolicy => Volatile.Read(ref _policy);
     public string? LockedGameVersion => Volatile.Read(ref _lockedGameVersion);
     public string? LockedModHash => Volatile.Read(ref _lockedModHash);
-    public SnapshotStore Snapshots { get; }
+    public SnapshotStore Snapshots { get; private set; }
 
     public DedicatedServer(ServerOptions options)
     {
@@ -102,7 +105,9 @@ public sealed class DedicatedServer : IAsyncDisposable
         if (options.MaxHistory is < 1 or > 5_000_000) throw new ArgumentOutOfRangeException(nameof(options), "MaxHistory must be between 1 and 5,000,000.");
         if (options.ModHash.Length > 512 || options.ModHash.Any(char.IsControl))
             throw new ArgumentException("ModHash must contain at most 512 printable characters.", nameof(options));
-        _options = options with { DataDirectory = Path.GetFullPath(options.DataDirectory) };
+        _adminKey = string.IsNullOrEmpty(options.AdminPassword) ? null :
+            AdminAuthentication.DeriveKey(options.AdminPassword, _adminSalt, AdminAuthentication.Iterations);
+        _options = options with { DataDirectory = Path.GetFullPath(options.DataDirectory), AdminPassword = null };
         Directory.CreateDirectory(_options.DataDirectory);
         _statePath = Path.Combine(_options.DataDirectory, "server-state.json");
         Snapshots = new SnapshotStore(Path.Combine(_options.DataDirectory, "Snapshots"));
@@ -166,6 +171,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             _controllerId = null;
             _hostId = null;
             _checkpointOwnerId = null;
+            ClearSimulationState();
             _worldUploads.Clear();
         }
         finally { _lifecycle.Release(); }
@@ -173,8 +179,9 @@ public sealed class DedicatedServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
-            await StopAsync().ConfigureAwait(false);
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        try { await StopAsync().ConfigureAwait(false); }
+        finally { if (_adminKey is not null) System.Security.Cryptography.CryptographicOperations.ZeroMemory(_adminKey); }
     }
 
     private async Task LoadStateAsync(CancellationToken ct)
@@ -186,8 +193,9 @@ public sealed class DedicatedServer : IAsyncDisposable
         var policy = saved?.Policy ?? new SpeedPolicy();
         // Reconstructing also validates a persisted policy before any socket is opened.
         policy = new SpeedPolicy(policy.Enabled, policy.Multiplier, policy.MaxRate, policy.Revision, policy.TimeSpeed);
-        var version = _options.GameVersion == "1.7" ? saved?.GameVersion : _options.GameVersion;
-        var modHash = _options.ModHash == "development" ? saved?.ModHash : _options.ModHash;
+        // Startup values initialize a room; a persisted lock (including an admin reset) is authoritative.
+        var version = saved?.GameVersion ?? (_options.GameVersion == "1.7" ? null : _options.GameVersion);
+        var modHash = saved?.ModHash ?? (_options.ModHash == "development" ? null : _options.ModHash);
         if (version is not null && !Validation.IsFullGameVersion(version))
             throw new InvalidDataException("The persisted compatibility game version is invalid.");
         if (modHash is not null && (string.IsNullOrWhiteSpace(modHash) || modHash.Length > 512 || modHash.Any(char.IsControl)))
@@ -195,6 +203,14 @@ public sealed class DedicatedServer : IAsyncDisposable
         Volatile.Write(ref _policy, policy);
         Volatile.Write(ref _lockedGameVersion, version);
         Volatile.Write(ref _lockedModHash, modHash);
+
+        _snapshotStoreId = saved?.SnapshotStoreId;
+        if (_snapshotStoreId is not null && (_snapshotStoreId.Length != 32 || _snapshotStoreId.Any(c => !char.IsAsciiHexDigit(c))))
+            throw new InvalidDataException("The persisted snapshot store id is invalid.");
+        Snapshots = new SnapshotStore(SnapshotDirectory(_snapshotStoreId));
+        ClearRoomRuntime();
+        Volatile.Write(ref _checkpointManifest, saved?.Checkpoint);
+        Volatile.Write(ref _checkpointTick, saved?.CheckpointTick ?? 0);
 
         // Resume the previous session so reconnecting players replay the same decisions.
         if (saved?.World is { } persistedWorld) Volatile.Write(ref _worldManifest, persistedWorld);
@@ -221,8 +237,10 @@ public sealed class DedicatedServer : IAsyncDisposable
             while (!ct.IsCancellationRequested)
             {
                 var socket = await listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
+                if (_peers.Count >= 256 || _peers.Values.Count(p => !p.Joined && !p.AuthenticatedAdmin) >= 64)
+                { socket.Dispose(); continue; }
                 var id = Interlocked.Increment(ref _nextPeer);
-                var peer = new Peer(id, socket, ct);
+                var peer = new Peer(id, socket, ct, Interlocked.Read(ref _roomGeneration));
                 _peers[id] = peer;
                 var handler = RunPeerAsync(peer);
                 _handlers[id] = handler;
@@ -251,16 +269,25 @@ public sealed class DedicatedServer : IAsyncDisposable
             handshake.CancelAfter(TimeSpan.FromSeconds(10));
             var hello = await peer.Connection.ReadAsync(handshake.Token).ConfigureAwait(false);
             if (hello is null) return;
-            if (hello.Type != "Hello" || hello.Hello is null)
-                throw new NetworkException("HelloRequired", "The first message must be a compatibility Hello.");
-            await JoinAsync(peer, hello, handshake.Token).ConfigureAwait(false);
+            if (hello.Type == "AdminHello")
+            {
+                peer.IsAdminConnection = true;
+                await AuthenticateAdminAsync(peer, hello, handshake.Token).ConfigureAwait(false);
+            }
+            else
+            {
+                if (hello.Type != "Hello" || hello.Hello is null)
+                    throw new NetworkException("HelloRequired", "The first message must be Hello or AdminHello.");
+                await JoinAsync(peer, hello, handshake.Token).ConfigureAwait(false);
+            }
             while (!peer.Token.IsCancellationRequested)
             {
                 var message = await peer.Connection.ReadAsync(peer.Token).ConfigureAwait(false);
                 if (message is null) break;
                 if (message.ProtocolVersion != NetworkProtocol.Version)
                     throw new NetworkException("ProtocolMismatch", $"Protocol version must be {NetworkProtocol.Version}.");
-                await DispatchAsync(peer, message).ConfigureAwait(false);
+                if (peer.AuthenticatedAdmin) await DispatchAdminAsync(peer, message).ConfigureAwait(false);
+                else await DispatchAsync(peer, message).ConfigureAwait(false);
             }
         }
         catch (NetworkException ex) { await SendFatalAsync(peer, ex.Code, ex.Message).ConfigureAwait(false); }
@@ -286,6 +313,9 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (peer.RoomGeneration != _roomGeneration || peer.Token.IsCancellationRequested)
+                throw new NetworkException("SessionChanged", "The room changed before this player joined.");
+            var isSimulation = ValidateSimulationAdmission(peer, hello);
             var version = _lockedGameVersion ?? hello.GameVersion;
             var modHash = _lockedModHash ?? hello.ModHash;
             if (!string.Equals(version, hello.GameVersion, StringComparison.Ordinal))
@@ -298,11 +328,18 @@ public sealed class DedicatedServer : IAsyncDisposable
                 Volatile.Write(ref _lockedGameVersion, version);
                 Volatile.Write(ref _lockedModHash, modHash);
             }
-            peer.CanEdit = _options.EveryoneCanEdit || _controllerId is null;
-            if (!_options.EveryoneCanEdit && _controllerId is null) _controllerId = peer.Id;
+            peer.IsSimulation = isSimulation;
+            peer.CanEdit = !isSimulation && (_options.EveryoneCanEdit || _controllerId is null);
+            if (!isSimulation && !_options.EveryoneCanEdit && _controllerId is null) _controllerId = peer.Id;
             peer.PlayerName = hello.PlayerName;
             peer.ColorIndex = PresenceRules.ColorForName(hello.PlayerName);
-            if (_checkpointOwnerId is null) _checkpointOwnerId = peer.Id;
+            if (isSimulation)
+            {
+                Volatile.Write(ref _simulationProgress, null);
+                Volatile.Write(ref _simulationPeer, peer);
+                _checkpointOwnerId = peer.Id;
+            }
+            else if (_checkpointOwnerId is null && !_options.RequireSimulation) _checkpointOwnerId = peer.Id;
             peer.Queue(new WireMessage
             {
                 Type = "Welcome", Policy = _policy, CanEdit = peer.CanEdit, IsHost = _hostId == peer.Id,
@@ -311,11 +348,14 @@ public sealed class DedicatedServer : IAsyncDisposable
                 PlayerId = peer.Id, Players = CapturePlayers(peer), Epoch = Epoch
             });
             peer.Joined = true; // No other broadcast can overtake Welcome on this peer's FIFO.
-            BroadcastPlayers();
+            if (isSimulation) BroadcastRoles();
+            else BroadcastPlayers();
             // Do not replay pointer history to a joiner. Each peer sends a one-second keepalive.
             // A peer arriving after the start waits for a fresh checkpoint: replaying thousands of ticks
             // would re-simulate the colony and diverge. The owner is asked for a snapshot at its current tick.
-            if (GameRunning)
+            if (GameRunning && isSimulation)
+                SendCatchUp(peer); // The resident simulation must not wait for a checkpoint from itself.
+            else if (GameRunning)
             {
                 lock (_pendingJoiners) _pendingJoiners[peer.Id] = Environment.TickCount64;
                 Console.WriteLine($"[server] peer {peer.Id} waiting for a fresh checkpoint");
@@ -340,6 +380,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                     await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
                     try
                     {
+                        RequireCurrentPeer(peer);
                         peer.LatencyMilliseconds = (int)Math.Clamp(Environment.TickCount64 - message.RequestId, 0, 60_000);
                         BroadcastPlayers();
                     }
@@ -347,7 +388,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                 }
                 return;
             case "Presence":
-                RelayPresence(peer, message);
+                await WithRoomGateAsync(peer, () => RelayPresence(peer, message)).ConfigureAwait(false);
                 return;
             case "ClaimHost":
                 RequireRequestId(message);
@@ -401,13 +442,16 @@ public sealed class DedicatedServer : IAsyncDisposable
                 await RelayCommandAsync(peer, message).ConfigureAwait(false);
                 return;
             case "ReportHash":
-                ReportHash(peer, message);
+                await WithRoomGateAsync(peer, () => ReportHash(peer, message)).ConfigureAwait(false);
                 return;
             default: throw new NetworkException("UnknownMessage", "This message is not supported.");
         }
     }
 
-    private PlayerInfo[] CapturePlayers(Peer? joining = null) => _peers.Values.Where(p => (p.Joined || ReferenceEquals(p, joining)) && !p.Token.IsCancellationRequested)
+    // The simulation's own Welcome includes its identity to satisfy DedicatedClient's handshake;
+    // every public roster, including the immediately following Players frame, hides it.
+    private PlayerInfo[] CapturePlayers(Peer? joining = null) => _peers.Values.Where(p =>
+        (p.Joined || ReferenceEquals(p, joining)) && (!p.IsSimulation || ReferenceEquals(p, joining)) && !p.Token.IsCancellationRequested)
         .OrderBy(p => p.Id).Select(p => new PlayerInfo(p.Id, p.PlayerName, p.ColorIndex, p.CanEdit,
             _checkpointOwnerId == p.Id, p.LatencyMilliseconds, _hostId == p.Id)).ToArray();
 
@@ -422,7 +466,7 @@ public sealed class DedicatedServer : IAsyncDisposable
     private void RefreshEditingRoles()
     {
         foreach (var peer in _peers.Values)
-            if (peer.Joined) peer.CanEdit = _options.EveryoneCanEdit || _controllerId == peer.Id;
+            if (peer.Joined) peer.CanEdit = !peer.IsSimulation && (_options.EveryoneCanEdit || _controllerId == peer.Id);
     }
 
     // Caller holds _stateGate. Role acknowledgements precede the corresponding roster/RPC response.
@@ -442,6 +486,12 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            RequireCurrentPeer(peer);
+            if (peer.IsSimulation)
+            {
+                peer.Queue(WireMessage.Error("SimulationReadOnly", "The process simulation has no player hosting role.", message.RequestId));
+                return;
+            }
             if (_hostId is not null && _hostId != peer.Id)
             {
                 peer.Queue(WireMessage.Error("HostOccupied", "Another player already hosts this room.", message.RequestId));
@@ -452,7 +502,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             // an explicit host claim transfers that editing authority instead of creating a second one.
             if (!_options.EveryoneCanEdit) _controllerId = peer.Id;
             RefreshEditingRoles();
-            if (!GameRunning) _checkpointOwnerId = peer.Id;
+            if (!GameRunning && !_options.RequireSimulation && _simulationPeer is null) _checkpointOwnerId = peer.Id;
             BroadcastRoles();
             peer.Queue(new WireMessage { Type = "HostClaimed", RequestId = message.RequestId, IsHost = true });
         }
@@ -482,6 +532,7 @@ public sealed class DedicatedServer : IAsyncDisposable
 
     private void RelayPresence(Peer peer, WireMessage message)
     {
+        if (peer.IsSimulation) return;
         var state = message.Presence;
         if (!PresenceRules.IsValid(state))
         {
@@ -500,6 +551,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            RequireCurrentPeer(peer);
             if (!CanUpload(peer, message)) return;
             var uploadId = message.UploadId;
             if (string.IsNullOrWhiteSpace(uploadId) || uploadId.Length > 64 || uploadId.Any(char.IsControl))
@@ -522,6 +574,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            RequireCurrentPeer(peer);
             if (!CanUpload(peer, message)) return;
             if (string.IsNullOrWhiteSpace(message.UploadId) || !_worldUploads.TryRemove((peer.Id, message.UploadId), out var upload) || upload.Chunks.Count == 0)
             { peer.Queue(WireMessage.Error("WorldMissing", "There is no matching upload owned by this connection.", message.RequestId)); return; }
@@ -596,8 +649,28 @@ public sealed class DedicatedServer : IAsyncDisposable
                 if (_peers.TryGetValue(id, out var joiner) && joiner.Joined) waiting.Add(joiner);
             _pendingJoiners.Clear();
         }
-        foreach (var joiner in waiting) SendCatchUp(joiner);
-        await PersistSessionAsync(peer.Token).ConfigureAwait(false);
+        if (_options.RequireSimulation && waiting.Count > 0)
+        {
+            // Verse snapshots do not serialize every transient cache. A live owner and a freshly
+            // deserialized joiner can diverge despite matching RNG/IDs. Establish one canonical load
+            // point for every replica, including the resident simulation, whenever a player joins.
+            Volatile.Write(ref _simulationProgress, null);
+            lock (_hashGate)
+            {
+                _firstHashAtTick.Clear();
+                _firstCategoriesAtTick.Clear();
+                _hashByPeerTick.Clear();
+                _firstPeerAtTick.Clear();
+                _reportedDesyncTicks.Clear();
+                _hashWindowFloor = message.Tick;
+            }
+            Volatile.Write(ref _requiredSimulationWorldId, manifest.Id);
+            Console.WriteLine($"[server] canonical join reload at tick {message.Tick}; resident simulation held until loaded");
+            foreach (var replica in _peers.Values)
+                if (replica.Joined) SendCatchUp(replica);
+        }
+        else foreach (var joiner in waiting) SendCatchUp(joiner);
+        await SaveCurrentStateLockedAsync(peer.Token).ConfigureAwait(false);
     }
 
     private async Task StartGameAsync(Peer peer, WireMessage message)
@@ -605,10 +678,13 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            RequireCurrentPeer(peer);
             if (_hostId != peer.Id) { peer.Queue(WireMessage.Error("HostOnly", "Only the room host may start the shared colony.", message.RequestId)); return; }
             var world = WorldManifest;
             if (world is null) { peer.Queue(WireMessage.Error("WorldMissing", "Publish the world snapshot before starting.", message.RequestId)); return; }
             var epoch = Interlocked.Increment(ref _epoch);
+            Volatile.Write(ref _simulationProgress, null);
+            Volatile.Write(ref _requiredSimulationWorldId, null);
             _worldUploads.Clear();
             Interlocked.Exchange(ref _tick, 0);
             Interlocked.Exchange(ref _commandSequence, 0);
@@ -631,7 +707,7 @@ public sealed class DedicatedServer : IAsyncDisposable
                 if (recipient.Joined)
                     recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world, Seed = seed });
             peer.Queue(new WireMessage { Type = "StartedAccepted", RequestId = message.RequestId, Epoch = epoch });
-            await PersistSessionAsync(peer.Token).ConfigureAwait(false);
+            await SaveCurrentStateLockedAsync(peer.Token).ConfigureAwait(false);
         }
         finally { _stateGate.Release(); }
     }
@@ -644,50 +720,55 @@ public sealed class DedicatedServer : IAsyncDisposable
             "zone-cell", "zone-delete", "bill-add", "bill-delete", "area-assign"
         };
 
-    private Task RelayCommandAsync(Peer peer, WireMessage message)
+    private async Task RelayCommandAsync(Peer peer, WireMessage message)
     {
-        if (!GameRunning || !peer.Joined) { peer.Queue(WireMessage.Error("NotPlaying", "The shared colony is not running.")); return Task.CompletedTask; }
-        var command = message.Command;
-        if (command is null || string.IsNullOrWhiteSpace(command.Kind) || command.Kind.Length > 64 || command.Kind.Any(char.IsControl)
-            || command.Payload is null || command.Payload.Length > 64 * 1024)
-        { peer.Queue(WireMessage.Error("InvalidCommand", "The command kind or payload is invalid.")); return Task.CompletedTask; }
-        // Only the known action classes are relayed; a client cannot invent a new command the game won't understand.
-        if (!KnownKinds.Contains(command.Kind))
-        { peer.TryQueue(WireMessage.Error("UnknownCommand", "This command kind is not part of the shared action set.")); return Task.CompletedTask; }
-        if (!peer.TryConsumeCommandBudget())
-        { peer.TryQueue(WireMessage.Error("RateLimited", "Too many commands; the server is throttling this client.")); return Task.CompletedTask; }
-        // Sequence assignment, history and broadcast must be one critical section: otherwise two peers can
-        // interleave and a peer receives a lower sequence after a higher one, which it must reject as a
-        // regression. That would silently drop a player's command.
-        var batch = new List<GameCommand>(1);
-        lock (_commandGate)
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+        try
         {
-            var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2,
-                command.Kind, command.Payload);
-            lock (_history)
+            RequireCurrentPeer(peer);
+            if (!GameRunning || !peer.Joined) { peer.Queue(WireMessage.Error("NotPlaying", "The shared colony is not running.")); return; }
+            if (peer.IsSimulation) { peer.Queue(WireMessage.Error("SimulationReadOnly", "The process simulation does not issue player commands.")); return; }
+            var command = message.Command;
+            if (command is null || string.IsNullOrWhiteSpace(command.Kind) || command.Kind.Length > 64 || command.Kind.Any(char.IsControl)
+                || command.Payload is null || command.Payload.Length > 64 * 1024)
+            { peer.Queue(WireMessage.Error("InvalidCommand", "The command kind or payload is invalid.")); return; }
+            // Only the known action classes are relayed; a client cannot invent a new command the game won't understand.
+            if (!KnownKinds.Contains(command.Kind))
+            { peer.TryQueue(WireMessage.Error("UnknownCommand", "This command kind is not part of the shared action set.")); return; }
+            if (!peer.TryConsumeCommandBudget())
+            { peer.TryQueue(WireMessage.Error("RateLimited", "Too many commands; the server is throttling this client.")); return; }
+            // Sequence assignment, history and broadcast must be one critical section: otherwise two peers can
+            // interleave and a peer receives a lower sequence after a higher one, which it must reject as a
+            // regression. That would silently drop a player's command.
+            var batch = new List<GameCommand>(1);
+            lock (_commandGate)
             {
-                if (_history.Count >= MaxHistory)
+                var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2,
+                    command.Kind, command.Payload);
+                lock (_history)
                 {
-                    // Keeping the contract honest: once history is dropped, mid-session joins cannot replay it.
-                    _history.Clear();
-                    _historyTruncated = true;
+                    if (_history.Count >= MaxHistory)
+                    {
+                        // Keeping the contract honest: once history is dropped, mid-session joins cannot replay it.
+                        _history.Clear();
+                        _historyTruncated = true;
+                    }
+                    _history.Add(assigned);
                 }
-                _history.Add(assigned);
+                batch.Add(assigned);
+                // The origin already executed the action locally when the player issued it; echoing it back
+                // would apply it twice (a duplicate blueprint, a double designator).
+                foreach (var recipient in _peers.Values)
+                    if (recipient.Joined && recipient.Id != peer.Id)
+                        recipient.Queue(new WireMessage { Type = "Commands", Commands = batch, Epoch = Epoch });
             }
-            batch.Add(assigned);
-            // The origin already executed the action locally when the player issued it; echoing it back
-            // would apply it twice (a duplicate blueprint, a double designator).
-            foreach (var recipient in _peers.Values)
-                if (recipient.Joined && recipient.Id != peer.Id)
-                    recipient.Queue(new WireMessage { Type = "Commands", Commands = batch, Epoch = Epoch });
+            if (++_commandsSincePersist >= 200)
+            {
+                _commandsSincePersist = 0;
+                await SaveCurrentStateLockedAsync(peer.Token).ConfigureAwait(false);
+            }
         }
-        if (++_commandsSincePersist >= 200)
-        {
-            _commandsSincePersist = 0;
-            _ = PersistSessionAsync(peer.Token).ContinueWith(task => { _ = task.Exception; },
-                CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
-        }
-        return Task.CompletedTask;
+        finally { _stateGate.Release(); }
     }
 
     /// <summary>Compares each peer's reported state hash for a tick; the first mismatch is a desync.</summary>
@@ -698,8 +779,8 @@ public sealed class DedicatedServer : IAsyncDisposable
         // Pruning and a world reset use this same boundary.
         lock (_hashGate)
         {
-            if (!GameRunning || !peer.Joined) return;
-            if (message.Tick < 0 || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
+            if (!GameRunning || !peer.Joined || message.Epoch != Epoch) return;
+            if (message.Tick < _hashWindowFloor || string.IsNullOrWhiteSpace(message.Sha256) || message.Sha256.Length != 64) return;
             var hash = message.Sha256!;
             PruneHashWindow(message.Tick);
             // Only distinct peers are comparable: a resend from the same peer is not a conflict.
@@ -767,6 +848,7 @@ public sealed class DedicatedServer : IAsyncDisposable
             if (key.Tick < floor) _hashByPeerTick.TryRemove(key, out _);
         foreach (var tick in _firstPeerAtTick.Keys)
             if (tick < floor) _firstPeerAtTick.TryRemove(tick, out _);
+        _reportedDesyncTicks.RemoveWhere(tick => tick < floor);
     }
 
     /// <summary>Sends the current epoch and the full command history to a peer that arrives mid-session.</summary>
@@ -796,20 +878,38 @@ public sealed class DedicatedServer : IAsyncDisposable
             var clock = new NativeTickClock();
             var previous = System.Diagnostics.Stopwatch.GetTimestamp();
             var lastBroadcast = -1;
+            var generation = Interlocked.Read(ref _roomGeneration);
             while (await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
             {
                 var now = System.Diagnostics.Stopwatch.GetTimestamp();
                 var elapsed = (now - previous) / (double)System.Diagnostics.Stopwatch.Frequency;
                 previous = now;
-                if (!GameRunning) continue;
-                ExpirePendingJoiners();
-                var count = clock.Advance(elapsed, CurrentPolicy.TimeSpeed);
-                var tick = count == 0 ? Tick : Interlocked.Add(ref _tick, count);
-                // Keep paused clients alive at the same watermark. Zero speed publishes no simulation debt.
-                if (tick - lastBroadcast < 6 && count != 0) continue;
-                lastBroadcast = tick;
-                foreach (var peer in _peers.Values)
-                    if (peer.Joined) peer.TryQueue(new WireMessage { Type = "Tick", Tick = tick });
+                await _stateGate.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    if (generation != _roomGeneration)
+                    {
+                        generation = _roomGeneration;
+                        clock = new NativeTickClock();
+                        lastBroadcast = -1;
+                        previous = System.Diagnostics.Stopwatch.GetTimestamp();
+                        elapsed = 0;
+                    }
+                    if (!GameRunning) continue;
+                    ExpirePendingJoiners();
+                    var budget = _options.RequireSimulation ? SimulationTickBudget() : int.MaxValue;
+                    // Always consume this frame's clock output before clamping it. Blocked or capped time
+                    // creates no debt for a later progress sample; a closed gate also resets fractions.
+                    var count = clock.Advance(elapsed, budget == 0 ? 0 : CurrentPolicy.TimeSpeed);
+                    count = Math.Min(count, budget);
+                    var tick = count == 0 ? Tick : Interlocked.Add(ref _tick, count);
+                    // Keep paused clients alive at the same watermark. Zero speed publishes no simulation debt.
+                    if (tick - lastBroadcast < 6 && count != 0) continue;
+                    lastBroadcast = tick;
+                    foreach (var peer in _peers.Values)
+                        if (peer.Joined) peer.TryQueue(new WireMessage { Type = "Tick", Tick = tick });
+                }
+                finally { _stateGate.Release(); }
             }
         }
         catch (Exception) { /* shutdown */ }
@@ -831,6 +931,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            RequireCurrentPeer(peer);
             if (!peer.CanEdit)
             {
                 peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may change the speed policy.", message.RequestId));
@@ -869,6 +970,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            RequireCurrentPeer(peer);
             if (!peer.CanEdit)
             {
                 peer.Queue(WireMessage.Error("ControllerOnly", "Only the controller may change native time speed.", message.RequestId));
@@ -900,10 +1002,14 @@ public sealed class DedicatedServer : IAsyncDisposable
         await _stateGate.WaitAsync().ConfigureAwait(false);
         try
         {
+            if (!peer.Joined || peer.RoomGeneration != _roomGeneration) return;
             peer.Joined = false;
-            var survivors = _peers.Values.Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
+            if (ReferenceEquals(Volatile.Read(ref _simulationPeer), peer)) ClearSimulationState();
+            var survivors = _peers.Values.Where(candidate => candidate.Joined && !candidate.IsSimulation && !candidate.Token.IsCancellationRequested)
                 .OrderBy(candidate => candidate.Id).ToArray();
-            if (_checkpointOwnerId == peer.Id) _checkpointOwnerId = survivors.FirstOrDefault()?.Id;
+            if (_checkpointOwnerId == peer.Id)
+                _checkpointOwnerId = _simulationPeer is { Joined: true } simulation && !simulation.Token.IsCancellationRequested
+                    ? simulation.Id : _options.RequireSimulation ? null : survivors.FirstOrDefault()?.Id;
             if (_hostId == peer.Id)
             {
                 // A running colony retains continuity; an empty lobby requires another explicit claim.
@@ -929,18 +1035,32 @@ public sealed class DedicatedServer : IAsyncDisposable
     private SavedState CaptureState(SpeedPolicy policy, string? version, string? modHash)
     {
         lock (_history)
-            return new SavedState(policy, version, modHash, Session, [.. _history], _historyTruncated, WorldManifest);
+            return new SavedState(policy, version, modHash, Session, [.. _history], _historyTruncated, WorldManifest,
+                _snapshotStoreId, CheckpointManifest, CheckpointTick);
     }
 
     /// <summary>Persists the running session so a restart resumes the same epoch, tick and history.</summary>
-    private Task PersistSessionAsync(CancellationToken ct)
+    private Task SaveCurrentStateLockedAsync(CancellationToken ct) =>
+        SaveStateAsync(CurrentPolicy, LockedGameVersion, LockedModHash, ct);
+
+    private async Task PersistSessionAsync(CancellationToken ct)
     {
-        List<GameCommand> history;
-        bool truncated;
-        lock (_history) { history = [.. _history]; truncated = _historyTruncated; }
-        var session = Session;
-        return AtomicFile.WriteJsonAsync(_statePath,
-            new SavedState(CurrentPolicy, LockedGameVersion, LockedModHash, session, history, truncated, WorldManifest), ct);
+        await _stateGate.WaitAsync(ct).ConfigureAwait(false);
+        try { await SaveCurrentStateLockedAsync(ct).ConfigureAwait(false); }
+        finally { _stateGate.Release(); }
+    }
+
+    private void RequireCurrentPeer(Peer peer)
+    {
+        if (!peer.Joined || peer.RoomGeneration != _roomGeneration || peer.Token.IsCancellationRequested)
+            throw new NetworkException("SessionChanged", "This player connection belongs to an earlier room.");
+    }
+
+    private async Task WithRoomGateAsync(Peer peer, Action action)
+    {
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+        try { RequireCurrentPeer(peer); action(); }
+        finally { _stateGate.Release(); }
     }
 
     private static void RequireRequestId(WireMessage message)
@@ -964,15 +1084,19 @@ public sealed class DedicatedServer : IAsyncDisposable
         catch (Exception) { peer.Close(); }
     }
 
-    private static async Task HeartbeatLoopAsync(Peer peer)
+    private async Task HeartbeatLoopAsync(Peer peer)
     {
         try
         {
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+            var lastGateBusy = Environment.TickCount64;
             while (await timer.WaitForNextTickAsync(peer.Token).ConfigureAwait(false))
             {
-                if (!peer.Joined) continue;
-                if (Environment.TickCount64 - peer.Connection.LastReceived > 20_000) { peer.Close(); return; }
+                if (!peer.Joined && !peer.AuthenticatedAdmin) continue;
+                // A long archive holds the room gate and may delay this peer's reader. Continue sending
+                // heartbeats, but grant receive grace while server work prevents processing its replies.
+                if (Volatile.Read(ref _archiveInProgress) != 0) lastGateBusy = Environment.TickCount64;
+                if (Environment.TickCount64 - Math.Max(peer.Connection.LastReceived, lastGateBusy) > 20_000) { peer.Close(); return; }
                 var sent = Environment.TickCount64;
                 Interlocked.Exchange(ref peer.LastPingSent, sent);
                 peer.Queue(new WireMessage { Type = "Ping", RequestId = sent });
@@ -986,11 +1110,16 @@ public sealed class DedicatedServer : IAsyncDisposable
         private readonly CancellationTokenSource _lifetime;
         private int _closed;
         internal readonly long Id;
+        internal readonly long RoomGeneration;
         internal readonly FramedConnection Connection;
         internal readonly Channel<WireMessage> Outbound = Channel.CreateBounded<WireMessage>(new BoundedChannelOptions(4096)
         { SingleReader = true, SingleWriter = false, FullMode = BoundedChannelFullMode.Wait });
         internal readonly CancellationToken Token;
         internal volatile bool Joined;
+        internal volatile bool AuthenticatedAdmin;
+        internal volatile bool IsAdminConnection;
+        internal bool IsSimulation;
+        internal readonly bool IsLoopback;
         internal bool CanEdit;
         internal string PlayerName = "";
         internal int ColorIndex;
@@ -1022,9 +1151,11 @@ public sealed class DedicatedServer : IAsyncDisposable
             return ++_commandsInWindow <= 400;
         }
 
-        internal Peer(long id, TcpClient socket, CancellationToken serverToken)
+        internal Peer(long id, TcpClient socket, CancellationToken serverToken, long roomGeneration)
         {
             Id = id;
+            RoomGeneration = roomGeneration;
+            IsLoopback = socket.Client.RemoteEndPoint is IPEndPoint remote && IPAddress.IsLoopback(remote.Address);
             Connection = new FramedConnection(socket);
             _lifetime = CancellationTokenSource.CreateLinkedTokenSource(serverToken);
             Token = _lifetime.Token;

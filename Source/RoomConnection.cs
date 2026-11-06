@@ -29,11 +29,13 @@ internal static class RoomConnection
     }
 
     internal static int SessionGeneration => generation;
+    internal static event Action? SessionChanging;
     public static bool IsHost => !Busy && client?.IsConnected == true && client.IsHost && TurboState.Authority.SessionConnected;
     public static bool HostRequested { get; private set; }
     public static string Endpoint { get; private set; } = "";
 
-    public static void Connect(TurboTickSettings settings, bool asHost = false)
+    public static void Connect(TurboTickSettings settings, bool asHost = false, bool publishCurrentOnConnect = false,
+        bool simulation = false)
     {
         SetStatus("开始连接 " + settings.ServerHost.Trim() + ":" + settings.ServerPort);
         // Must run on the game thread before starting the background hash/connection operation.
@@ -50,6 +52,9 @@ internal static class RoomConnection
         if (name.Length is < 1 or > 32 || name.Any(char.IsControl)) { SetStatus(TurboTickSettings.T("TurboTick_InvalidName")); return; }
         reconnectTarget = new TurboTickSettings { ServerHost = host, ServerPort = port.ToString(), PlayerName = name };
         Leave();
+        // Automatic publication is an explicit one-connection developer option; manual/reset joins never inherit it.
+        publishOnConnect = publishCurrentOnConnect;
+        publishedOnce = false;
         HostRequested = asHost;
         Endpoint = (host.Contains(':') ? "[" + host + "]" : host) + ":" + port;
         var id = ++generation;
@@ -90,7 +95,7 @@ internal static class RoomConnection
         socket.Ticked += tick => PostWorld(() => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => PostWorld(() => SharedColony.OnCommands(commands));
         socket.DesyncDetected += (tick, detail) => PostWorld(() => SharedColony.OnDesync(tick, detail));
-        socket.CheckpointRequested += () => PostWorld(() => PublishCheckpoint(SharedColony.Session.Barrier.AppliedTick));
+        socket.CheckpointRequested += () => PostWorld(() => checkpointRequested = true);
         socket.CatchUpIncomplete += () => PostWorld(() =>
         {
             const string reason = "服务器命令历史已截断，无法完整追平；等待控制者检查点后重连";
@@ -105,7 +110,8 @@ internal static class RoomConnection
                 Post(id, () => { Fingerprint = hello.ModHash; Status = "指纹已生成，连接服务器…"; });
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
-                await socket.ConnectAsync(host, port, hello, timeout.Token).ConfigureAwait(false);
+                if (simulation) await HeadlessRuntime.ConnectSimulationAsync(socket, hello, timeout.Token).ConfigureAwait(false);
+                else await socket.ConnectAsync(host, port, hello, timeout.Token).ConfigureAwait(false);
                 if (asHost) await socket.ClaimHostAsync(timeout.Token).ConfigureAwait(false);
                 Post(id, () =>
                 {
@@ -268,11 +274,14 @@ internal static class RoomConnection
         var socket = client;
         var token = lifetime!.Token;
         var id = generation;
-        return Task.Run(async () =>
+        // Enter the client immediately so its session/epoch is captured before another game-thread
+        // reconnect or load can replace it; Task.Run used to let old hash work enter the new epoch.
+        return SendAsync();
+        async Task SendAsync()
         {
             try { await socket.ReportHashAsync(tick, sha256, categories, token).ConfigureAwait(false); }
             catch (Exception error) { Post(id, () => Status = "状态校验上报失败：" + error.Message); }
-        });
+        }
     }
 
     private static bool autoConnectTried;
@@ -282,7 +291,7 @@ internal static class RoomConnection
     /// <summary>Developer aid used by the acceptance run: join once after a colony loads.</summary>
     public static void AutoConnectOnce()
     {
-        if (autoConnectTried) return;
+        if (HeadlessRuntime.Active || autoConnectTried) return;
         autoConnectTried = true;
         if (TurboState.Authority.SessionRequested || MultiplayerHosting.Pending || MultiplayerHosting.IsHosting) return;
         // Automated acceptance runs pass -turbotick-connect=host:port on the command line.
@@ -298,9 +307,9 @@ internal static class RoomConnection
                 ServerPort = port,
                 PlayerName = "AcceptanceClient"
             };
-            publishOnConnect = GenCommandLine.CommandLineArgPassed("turbotick-publish");
+            var autoPublish = GenCommandLine.CommandLineArgPassed("turbotick-publish");
             Log.Message("[TurboTick] 命令行自动连接：" + commandLineSettings.ServerHost + ":" + port);
-            Connect(commandLineSettings, asHost: publishOnConnect);
+            Connect(commandLineSettings, asHost: autoPublish, publishCurrentOnConnect: autoPublish);
             return;
         }
         var settings = TurboTickMod.Settings;
@@ -316,35 +325,62 @@ internal static class RoomConnection
     {
         var settings = reconnectTarget;
         if (settings == null || string.IsNullOrWhiteSpace(settings.ServerHost)) return;
-        Connect(settings, asHost: HostRequested && client?.PresenceEpoch == -1);
+        Connect(settings, asHost: HostRequested && client?.PresenceEpoch == -1, simulation: HeadlessRuntime.Active);
     }
+    private static bool checkpointRequested;
     private static int checkpointing;
+    private static Task<bool>? checkpointOperation;
+    internal static Task<bool> PendingCheckpoint => checkpointOperation ?? Task.FromResult(true);
+    internal static bool CheckpointBusy => Volatile.Read(ref checkpointing) != 0;
 
 
     /// <summary>Checkpoint owner: saves the colony at the current tick and publishes it so late joins replay less.</summary>
-    public static void PublishCheckpoint(int tick)
+    public static void PublishCheckpoint(int tick) => _ = PublishCheckpointAsync(tick);
+
+    // Called on the game thread. Completion means the server committed the actual snapshot, not just
+    // that saving was queued; headless termination waits for this result before flushing the protocol.
+    internal static Task<bool> PublishCheckpointAsync(int tick)
     {
-        if (client?.IsConnected != true || !IsCheckpointOwner) return;
-        if (Interlocked.Exchange(ref checkpointing, 1) != 0) return;
+        if (client?.IsConnected != true || !IsCheckpointOwner || !SharedColony.Gating
+            || Current.ProgramState != ProgramState.Playing || Current.Game is null
+            || Scribe.mode != LoadSaveMode.Inactive) return Task.FromResult(false);
+        if (Interlocked.Exchange(ref checkpointing, 1) != 0) return Task.FromResult(false);
         var socket = client;
         var id = generation;
         var token = lifetime!.Token;
-        string path;
-        try { path = WorldFiles.SaveCurrentGame(); }
-        catch (Exception error) { Interlocked.Exchange(ref checkpointing, 0); Status = "检查点保存失败：" + error.Message; return; }
-        var bytes = File.ReadAllBytes(path);
-        var manifest = WorldFiles.Describe(bytes);
-        SimulationDiagnostics.Boundary("checkpoint-created", manifest.Id);
-        Track(Task.Run(async () =>
+        byte[] bytes;
+        SnapshotManifest manifest;
+        try
+        {
+            var path = WorldFiles.SaveCurrentGame();
+            bytes = File.ReadAllBytes(path);
+            manifest = WorldFiles.Describe(bytes);
+            SimulationDiagnostics.Boundary("checkpoint-created", manifest.Id);
+        }
+        catch (Exception error)
+        {
+            Interlocked.Exchange(ref checkpointing, 0);
+            SetStatus("检查点保存失败：" + error.Message);
+            return Task.FromResult(false);
+        }
+        var operation = Task.Run(async () =>
         {
             try
             {
                 using var stream = new MemoryStream(bytes, writable: false);
                 await socket.CheckpointWorldAsync(manifest, stream, tick, token).ConfigureAwait(false);
+                return true;
             }
-            catch (Exception error) { Post(id, () => Status = "检查点上传失败：" + error.Message); }
+            catch (Exception error)
+            {
+                Post(id, () => SetStatus("检查点上传失败：" + error.Message));
+                return false;
+            }
             finally { Interlocked.Exchange(ref checkpointing, 0); }
-        }));
+        });
+        checkpointOperation = operation;
+        Track(operation);
+        return operation;
     }
 
     public static Task SendCommand(string kind, byte[] payload, long sequence)
@@ -385,6 +421,10 @@ internal static class RoomConnection
 
     public static void Leave()
     {
+        SessionChanging?.Invoke();
+        publishOnConnect = false;
+        publishedOnce = false;
+        checkpointRequested = false;
         MultiplayerHosting.Cancel();
         HostRequested = false;
         Endpoint = "";
@@ -409,7 +449,14 @@ internal static class RoomConnection
         for (int n = 0; n < 128 && gameActions.TryDequeue(out var action); n++)
             try { action(); } catch (Exception error) { Log.Warning("[TurboTick] " + error.Message); }
         operations.RemoveAll(task => task.IsCompleted);
-        PlayerPresence.Update();
+        if (checkpointRequested && !HeadlessRuntime.StopRequested && !CheckpointBusy && IsCheckpointOwner
+            && SharedColony.Gating && Current.ProgramState == ProgramState.Playing && Current.Game is not null
+            && Scribe.mode == LoadSaveMode.Inactive && !LongEventHandler.AnyEventNowOrWaiting)
+        {
+            checkpointRequested = false;
+            PublishCheckpoint(SharedColony.Session.Barrier.AppliedTick);
+        }
+        if (!HeadlessRuntime.Active) PlayerPresence.Update();
     }
 
     private static void Post(int id, Action action) => gameActions.Enqueue(() => { if (id == generation) action(); });

@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   build-test-package:
     runs-on: ubuntu-latest
@@ -29,7 +33,7 @@ jobs:
           if ($version -ne $modVersion) { throw 'Mod and repository versions differ.' }
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Release tag and source version differ.' }
           "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-      - name: Build, integration tests, package
+      - name: Build, protocol and CLI integration tests, installer tests, package validation
         shell: pwsh
         run: ./scripts/package.ps1
       - name: Upload runtime packages
@@ -39,6 +43,8 @@ jobs:
           path: |
             artifacts/TurboTick-${{ steps.version.outputs.value }}-mod-1.7.zip
             artifacts/TurboTick-${{ steps.version.outputs.value }}-server.zip
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-headless-installer.zip
+            artifacts/SHA256SUMS
           if-no-files-found: error
           retention-days: 7
       - name: Publish stable GitHub release
@@ -53,11 +59,27 @@ jobs:
           files: |
             artifacts/TurboTick-${{ steps.version.outputs.value }}-mod-1.7.zip
             artifacts/TurboTick-${{ steps.version.outputs.value }}-server.zip
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-headless-installer.zip
+            artifacts/SHA256SUMS
           body: |
-            - 主菜单多人大厅：先连接专服并确认房主身份，再选择已有存档或新建殖民地。
-            - 新增玩家指针、名单、延迟及可折叠联机面板。
-            - 修复取消蓝图、删除区域的补丁定位及重复菜单入口。
-            - 发布内容仅包含运行文件和必要使用说明。
+            ## SteamCMD + headless 托管
 
-            RimWorld 1.7；客户端与专服需配套更新，网络协议 v4。
-            Docker：`ghcr.io/lumidust/turbotick-server:${{ steps.version.outputs.value }}`
+            - 新增常驻游戏模拟、服务器检查点、空服继续运行与停服恢复。
+            - SteamCMD 安装器支持原生 Steam Guard 交互、缓存登录、文件校验及未来专服的显式配置。
+            - 修正联机 tick 间隔、路径请求和退出持久化；管理使用独立共享密码，不绑定首次创建者。
+            - 仍采用锁步模拟；新玩家加入时会共同重载检查点。第三方模组和长期游玩需按组合验证。
+
+            ## 下载与更新
+
+            - `mod-1.7.zip`：客户端 Mod；所有玩家与 headless 服务端使用同一份包。
+            - `headless-installer.zip`：同版 Mod、Windows/Linux SteamCMD 脚本及部署模板。
+            - `server.zip`：原有独立 .NET 10 网络服务器。
+            - `SHA256SUMS`：三个运行包的校验值。
+
+            RimWorld 1.7；TurboTick ${{ steps.version.outputs.value }}；协议 v4。客户端与专服配套更新，旧版连接会被版本校验拦截。headless 服务端运行时的模组指纹也需随同版包更新。
+
+            发布包不包含原版游戏、Harmony、源码、个人配置或部署记录。游戏和 Harmony 通过各自来源安装。
+
+            [安装与使用](https://github.com/LumiDust/TurboTick#readme) · [headless 部署](https://github.com/LumiDust/TurboTick/blob/main/deploy/README.md)
+
+            Docker（独立网络服）：`ghcr.io/lumidust/turbotick-server:${{ steps.version.outputs.value }}`；对应镜像由独立工作流构建。
