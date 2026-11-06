@@ -46,8 +46,14 @@ draw.text((38, 88), "TurboTick", font=font(54, True), fill=(242, 248, 252))
 draw.text((41, 163), "Dedicated multiplayer project", font=font(20), fill=(160, 188, 207))
 draw.text((41, 212), "ROOMS  /  SPEED SYNC  /  SNAPSHOT CACHE", font=font(13, True), fill=(96, 218, 196))
 draw.line((40, 272, 600, 272), fill=(48, 82, 100), width=1)
-draw.text((41, 294), "DEVELOPMENT PREVIEW", font=font(16, True), fill=(237, 193, 113))
-draw.text((441, 296), "TurboTick  |  YG", font=font(14), fill=(141, 167, 186))
+draw.text((41, 294), "RELEASE 0.4.0", font=font(16, True), fill=(237, 193, 113))
+try:
+    zh_font = ImageFont.truetype(str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msyh.ttc"), 13)
+except Exception:
+    zh_font = font(13)
+text = "TurboTick  |  丿和光同尘"
+w = zh_font.getlength(text)
+draw.text((int(600 - w), 296), text, font=zh_font, fill=(141, 167, 186))
 image.save(ABOUT / "Preview.png", optimize=True)
 icon = Image.new("RGB", (256, 256), (15, 32, 49))
 emblem(ImageDraw.Draw(icon), 128, 117, 86)
