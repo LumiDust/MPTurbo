@@ -17,7 +17,7 @@ internal static class CaravanGuardPatch
         if (!SharedColony.Gating) return true;
         if (InteractionPolicy.CanRunColonyWideAction(
                 sharedPlaying: true,
-                isOwner: RoomConnection.IsCheckpointOwner,
+                isOwner: RoomConnection.IsHost,
                 allowEveryone: TurboTickMod.Settings is { everyoneMayTrade: true }))
             return true;
         __result = false;

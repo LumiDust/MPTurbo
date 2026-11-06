@@ -13,8 +13,13 @@ internal sealed record WireMessage
     public int ProtocolVersion { get; init; } = NetworkProtocol.Version;
     public long RequestId { get; init; }
     public ClientHello? Hello { get; init; }
+    public long PlayerId { get; init; }
+    public IReadOnlyList<PlayerInfo>? Players { get; init; }
+    public PresenceUpdate? Presence { get; init; }
+    public PlayerPresence? PlayerPresence { get; init; }
     public SpeedPolicy? Policy { get; init; }
     public bool? CanEdit { get; init; }
+    public bool? IsHost { get; init; }
     public string? GameVersion { get; init; }
     public string? ModHash { get; init; }
     public string? ClientVersion { get; init; }

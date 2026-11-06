@@ -12,7 +12,7 @@ namespace TurboTick;
 /// Shared-colony action layer. Every player-issued action passes through choke points:
 ///   DesignationManager.AddDesignation / RemoveDesignation - mine / deconstruct / hunt / harvest / cut / tame / cancels
 ///   GenConstruct.PlaceBlueprintForBuild                   - building and furniture orders
-///   Blueprint.Destroy / Frame.Destroy                     - cancel construction
+///   ThingWithComps.Destroy (Blueprint) / Frame.Destroy    - cancel construction
 ///   Pawn_DraftController.set_Drafted                      - draft toggle
 ///   Pawn_JobTracker.TryTakeOrderedJob                     - right-click move / haul / attack / interact orders
 ///   ForbidUtility.SetForbidden                            - item forbid / unforbid
@@ -404,12 +404,14 @@ internal static class BlueprintCapturePatch
         SharedActions.CaptureBlueprint(sourceDef, stuff, center, map, rotation);
 }
 
-[HarmonyPatch(typeof(Blueprint), nameof(Blueprint.Destroy))]
+// Blueprint inherits Destroy from ThingWithComps in both 1.7 reference and installed game assemblies.
+// Harmony resolves declared methods; target the declaring type and keep capture blueprint-only.
+[HarmonyPatch(typeof(ThingWithComps), nameof(ThingWithComps.Destroy), new[] { typeof(DestroyMode) })]
 internal static class BlueprintCancelCapturePatch
 {
-    private static void Prefix(Blueprint __instance, DestroyMode mode)
+    private static void Prefix(ThingWithComps __instance, DestroyMode mode)
     {
-        if (mode == DestroyMode.Cancel) SharedActions.CaptureCancelThing(__instance);
+        if (__instance is Blueprint && mode == DestroyMode.Cancel) SharedActions.CaptureCancelThing(__instance);
     }
 }
 
@@ -472,7 +474,8 @@ internal static class ZoneRemoveCellCapturePatch
     private static void Postfix(Zone __instance, IntVec3 c) => SharedActions.CaptureZoneCell(__instance, c, add: false);
 }
 
-[HarmonyPatch(typeof(Zone), nameof(Zone.Delete))]
+// Delete() is the user-facing wrapper; Delete(bool) is a separate virtual overload.
+[HarmonyPatch(typeof(Zone), nameof(Zone.Delete), new Type[0])]
 internal static class ZoneDeleteCapturePatch
 {
     private static void Prefix(Zone __instance) => SharedActions.CaptureZoneDelete(__instance);

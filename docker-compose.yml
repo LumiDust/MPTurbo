@@ -2,7 +2,7 @@ name: turbotick
 
 services:
   turbotick-server:
-    image: ghcr.io/lumidust/turbotick-server:latest
+    image: ghcr.io/lumidust/turbotick-server:0.5.0
     container_name: turbotick-server
     restart: unless-stopped
     ports:

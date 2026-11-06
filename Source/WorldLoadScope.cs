@@ -30,5 +30,6 @@ internal static class SharedLoadFailurePatch
     private static void Prefix(Exception __0)
     {
         if (SharedColony.LoadPending) SharedColony.OnWorldLoadFailed(__0.Message);
+        MultiplayerHosting.LoadFailed(__0.Message);
     }
 }

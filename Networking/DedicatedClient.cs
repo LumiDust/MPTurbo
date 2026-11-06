@@ -24,8 +24,13 @@ public sealed class DedicatedClient : IAsyncDisposable
     private int _connected;
     private int _canEdit;
     private int _checkpointOwner;
+    private int _isHost;
     private int _disposed;
     private long _nextRequest;
+    private long _playerId;
+    private IReadOnlyList<PlayerInfo> _players = Array.Empty<PlayerInfo>();
+    private IReadOnlyList<PlayerPresence> _presences = Array.Empty<PlayerPresence>();
+    private int _latencyMilliseconds = -1;
 
     public event Action<SpeedPolicy>? PolicyChanged;
     public event Action<string>? StatusChanged;
@@ -40,7 +45,24 @@ public sealed class DedicatedClient : IAsyncDisposable
     public bool IsConnected => Volatile.Read(ref _connected) != 0;
     public bool CanEdit => Volatile.Read(ref _canEdit) != 0;
     public bool IsCheckpointOwner => Volatile.Read(ref _checkpointOwner) != 0;
+    /// <summary>Explicit server-confirmed room host, independent of editing and checkpoint duties.</summary>
+    public bool IsHost => Volatile.Read(ref _isHost) != 0;
     public string Status => Volatile.Read(ref _status);
+    public long PlayerId => Interlocked.Read(ref _playerId);
+    /// <summary>Immutable snapshots, safe to inspect on the game thread without subscribing to events.</summary>
+    public IReadOnlyList<PlayerInfo> Players => Volatile.Read(ref _players);
+    public IReadOnlyList<PlayerPresence> Presences => Volatile.Read(ref _presences);
+    public int LatencyMilliseconds => Volatile.Read(ref _latencyMilliseconds);
+    public long PresenceEpoch
+    {
+        get
+        {
+            var session = Volatile.Read(ref _session);
+            return session is null ? -1 : Interlocked.Read(ref session.Epoch);
+        }
+    }
+    public event Action<IReadOnlyList<PlayerInfo>>? PlayersChanged;
+    public event Action<PlayerPresence>? PresenceChanged;
 
     public DedicatedClient() => _notificationTask = Task.Run(NotificationLoopAsync);
 
@@ -75,7 +97,9 @@ public sealed class DedicatedClient : IAsyncDisposable
                 var welcome = await connection.ReadAsync(timeout.Token).ConfigureAwait(false)
                     ?? throw new NetworkException("HandshakeClosed", "The server closed the connection before the handshake completed.");
                 if (welcome.Type == "Error") throw ServerError(welcome);
-                if (welcome.Type != "Welcome" || welcome.Policy is null || welcome.CanEdit is null)
+                if (welcome.Type != "Welcome" || welcome.Policy is null || welcome.CanEdit is null || welcome.IsHost is null ||
+                    welcome.PlayerId <= 0 || !ValidPlayers(welcome.Players) ||
+                    !welcome.Players!.Any(player => player.Id == welcome.PlayerId))
                     throw new NetworkException("InvalidWelcome", "The server did not return a valid Welcome and speed policy.");
                 if (welcome.ProtocolVersion != NetworkProtocol.Version || welcome.ClientVersion != NetworkProtocol.ClientVersion)
                     throw new NetworkException("ProtocolMismatch", "The server protocol or client version differs from this client.");
@@ -84,14 +108,20 @@ public sealed class DedicatedClient : IAsyncDisposable
                 if (!string.Equals(welcome.ModHash, hello.ModHash, StringComparison.Ordinal))
                     throw new NetworkException("ModHashMismatch", "The server Welcome contains a different simulation mod hash.");
                 timeout.Token.ThrowIfCancellationRequested();
-                var session = new Session(this, connection, welcome.Policy.Revision, generation);
+                var session = new Session(this, connection, welcome.Policy.Revision, generation) { Epoch = welcome.Epoch };
                 lock (_stateSync)
                 {
                     Volatile.Write(ref _session, session);
                     Volatile.Write(ref _currentPolicy, welcome.Policy);
                     Volatile.Write(ref _canEdit, welcome.CanEdit.Value ? 1 : 0);
-                Volatile.Write(ref _checkpointOwner, welcome.CheckpointOwner == true ? 1 : 0);
+                    Volatile.Write(ref _checkpointOwner, welcome.CheckpointOwner == true ? 1 : 0);
+                    Volatile.Write(ref _isHost, welcome.IsHost.Value ? 1 : 0);
+                    Interlocked.Exchange(ref _playerId, welcome.PlayerId);
+                    Volatile.Write(ref _players, Array.AsReadOnly(welcome.Players!.ToArray()));
+                    Volatile.Write(ref _presences, Array.Empty<PlayerPresence>());
+                    Volatile.Write(ref _latencyMilliseconds, -1);
                     Volatile.Write(ref _connected, 1);
+                    Publish(session, () => PlayersChanged?.Invoke(Players));
                     PublishPolicy(welcome.Policy, session);
                     SetStatus(welcome.CanEdit.Value ? "Connected (controller)" : "Connected (read-only)", generation);
                 }
@@ -285,17 +315,33 @@ public sealed class DedicatedClient : IAsyncDisposable
         return reply.Manifest;
     }
 
-    /// <summary>Controller-only: upload a periodic checkpoint taken at <paramref name="checkpointTick"/>.</summary>
+    /// <summary>Explicitly claim the room host role. Joining alone never claims it. The request and
+    /// response stay bound to this connection; an occupied room returns HostOccupied.</summary>
+    public async Task ClaimHostAsync(CancellationToken ct = default)
+    {
+        var session = ConnectedSession();
+        var reply = await RequestAsync(new WireMessage { Type = "ClaimHost" }, ct, session).ConfigureAwait(false);
+        lock (_stateSync)
+        {
+            if (!ReferenceEquals(_session, session) || session.IsClosed || !IsConnected)
+                throw new NetworkException("SessionChanged", "The host request's original room connection changed.");
+            if (reply.Type != "HostClaimed" || reply.IsHost != true || !IsHost)
+                throw new NetworkException("InvalidResponse", "The server did not confirm the host role.");
+        }
+    }
+
+    /// <summary>Checkpoint-owner only: upload a periodic checkpoint taken at <paramref name="checkpointTick"/>.</summary>
     public Task CheckpointWorldAsync(SnapshotManifest manifest, Stream source, int checkpointTick, CancellationToken ct = default) =>
         UploadWorldAsync(manifest, source, ct, checkpointTick);
 
-    /// <summary>Controller-only: upload the authoritative world snapshot in verified chunks.</summary>
+    /// <summary>Host-only initial world publication, or checkpoint-owner-only checkpoint upload.</summary>
     public async Task UploadWorldAsync(SnapshotManifest manifest, Stream source, CancellationToken ct = default, int? checkpointTick = null)
     {
         Validation.Manifest(manifest);
         ArgumentNullException.ThrowIfNull(source);
         var session = ConnectedSession();
         var uploadId = Guid.NewGuid().ToString("N");
+        var epoch = Interlocked.Read(ref session.Epoch);
         for (var index = 0; index < manifest.ChunkHashes.Count; index++)
         {
             ct.ThrowIfCancellationRequested();
@@ -306,19 +352,20 @@ public sealed class DedicatedClient : IAsyncDisposable
                 throw new NetworkException("WorldHashMismatch", "A world chunk does not match its manifest hash.");
             await RequestAsync(new WireMessage
             {
-                Type = "PublishWorldChunk", UploadId = uploadId, ChunkIndex = index, WorldChunk = chunk
+                Type = "PublishWorldChunk", UploadId = uploadId, ChunkIndex = index, WorldChunk = chunk,
+                Checkpoint = checkpointTick.HasValue, Tick = checkpointTick ?? 0, Epoch = epoch
             }, ct, session).ConfigureAwait(false);
         }
         var reply = await RequestAsync(new WireMessage
         {
             Type = "CommitWorld", UploadId = uploadId, ChunkCount = manifest.ChunkHashes.Count, Sha256 = manifest.Id,
-            Checkpoint = checkpointTick.HasValue, Tick = checkpointTick ?? 0
+            Checkpoint = checkpointTick.HasValue, Tick = checkpointTick ?? 0, Epoch = epoch
         }, ct, session).ConfigureAwait(false);
         if (reply.Type != "WorldCommitted" || reply.Manifest?.Id != manifest.Id)
             throw new NetworkException("WorldUploadRejected", "The server did not accept the world snapshot.");
     }
 
-    /// <summary>Controller-only: start (or restart) the shared simulation for everyone in the room.</summary>
+    /// <summary>Host-only: explicitly start (or restart) the shared simulation for everyone in the room.</summary>
     public async Task StartGameAsync(CancellationToken ct = default)
     {
         var reply = await RequestAsync(new WireMessage { Type = "StartGame" }, ct).ConfigureAwait(false);
@@ -337,6 +384,27 @@ public sealed class DedicatedClient : IAsyncDisposable
             Type = "Command", Command = new GameCommand(0, 0, kind, payload)
         }, session.Token).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
+    }
+
+    /// <summary>Best-effort presentation update, capped at 10 Hz with one write in flight. No request,
+    /// task queue, command sequence, history entry or simulation tick is created. A dropped update is
+    /// replaced by the next sample. The captured connection is never redirected to another room.</summary>
+    public async Task<bool> SendPresenceAsync(PresenceUpdate state)
+    {
+        if (!PresenceRules.IsValid(state)) throw new ArgumentException("Invalid map presence.", nameof(state));
+        var session = ConnectedSession();
+        if (state.Epoch != Interlocked.Read(ref session.Epoch)) return false;
+        if (Interlocked.CompareExchange(ref session.PresenceWriteInFlight, 1, 0) != 0) return false;
+        try
+        {
+            var now = Environment.TickCount64;
+            if (now - session.LastPresenceSent < PresenceRules.SendIntervalMilliseconds) return false;
+            session.LastPresenceSent = now;
+            await session.Connection.WriteAsync(new WireMessage { Type = "Presence", Presence = state }, session.Token)
+                .ConfigureAwait(false);
+            return true;
+        }
+        finally { Volatile.Write(ref session.PresenceWriteInFlight, 0); }
     }
 
     /// <summary>Reports the local state hash for a tick so the server can detect divergence.</summary>
@@ -382,6 +450,7 @@ public sealed class DedicatedClient : IAsyncDisposable
             session = Interlocked.Exchange(ref _session, null);
             Volatile.Write(ref _connected, 0);
             Volatile.Write(ref _canEdit, 0);
+            ClearPresence(generation);
             SetStatus("Disconnected", generation);
         }
         if (session is not null)
@@ -449,7 +518,38 @@ public sealed class DedicatedClient : IAsyncDisposable
                     case "Ping":
                         await session.Connection.WriteAsync(new WireMessage { Type = "Pong", RequestId = message.RequestId }, session.Token).ConfigureAwait(false);
                         break;
-                    case "Pong": break;
+                    case "Pong":
+                        lock (_stateSync)
+                        {
+                            if (ReferenceEquals(_session, session) && !session.IsClosed && message.RequestId > 0 &&
+                                message.RequestId == Interlocked.Read(ref session.LastPingSent))
+                                Volatile.Write(ref _latencyMilliseconds, (int)Math.Clamp(Environment.TickCount64 - message.RequestId, 0, 60_000));
+                        }
+                        break;
+                    case "Players":
+                        if (!ValidPlayers(message.Players)) throw new NetworkException("InvalidPlayers", "The room roster is invalid.");
+                        lock (_stateSync)
+                        {
+                            if (!ReferenceEquals(_session, session) || session.IsClosed) break;
+                            var players = Array.AsReadOnly(message.Players!.ToArray());
+                            Volatile.Write(ref _players, players);
+                            Volatile.Write(ref _presences, Array.AsReadOnly(_presences.Where(p => players.Any(player => player.Id == p.PlayerId)).ToArray()));
+                            Publish(session, () => PlayersChanged?.Invoke(players));
+                        }
+                        break;
+                    case "Presence":
+                        var incoming = message.PlayerPresence;
+                        if (incoming is null || !PresenceRules.IsValid(incoming.State))
+                            throw new NetworkException("InvalidPresence", "The room presence is invalid.");
+                        lock (_stateSync)
+                        {
+                            if (!ReferenceEquals(_session, session) || session.IsClosed || incoming.State.Epoch != session.Epoch ||
+                                !_players.Any(p => p.Id == incoming.PlayerId)) break;
+                            var presence = incoming with { UpdatedAtMilliseconds = Environment.TickCount64 };
+                            Volatile.Write(ref _presences, Array.AsReadOnly(_presences.Where(p => p.PlayerId != presence.PlayerId).Append(presence).ToArray()));
+                            Publish(session, () => PresenceChanged?.Invoke(presence));
+                        }
+                        break;
                     case "Policy":
                         if (message.Policy is null || message.Policy.Revision < session.LastRevision)
                             throw new NetworkException("InvalidPolicy", "The server sent an invalid or decreasing policy revision.");
@@ -465,15 +565,21 @@ public sealed class DedicatedClient : IAsyncDisposable
                         CompleteResponse(session, message);
                         break;
                     case "Role":
-                        if (message.CanEdit is null) throw new NetworkException("InvalidRole", "The server role update is incomplete.");
+                        if (message.CanEdit is null || message.IsHost is null) throw new NetworkException("InvalidRole", "The server role update is incomplete.");
                         lock (_stateSync)
                         {
                             if (ReferenceEquals(_session, session) && !session.IsClosed)
                             {
                                 Volatile.Write(ref _canEdit, message.CanEdit.Value ? 1 : 0);
-                                SetStatus(message.CanEdit.Value ? "Connected (controller)" : "Connected (read-only)", session.Generation);
+                                Volatile.Write(ref _isHost, message.IsHost.Value ? 1 : 0);
+                                SetStatus(message.IsHost.Value ? "Connected (host)" : message.CanEdit.Value ? "Connected (controller)" : "Connected (read-only)", session.Generation);
                             }
                         }
+                        break;
+                    case "HostClaimed":
+                        if (message.IsHost != true) throw new NetworkException("InvalidRole", "The host acknowledgement is incomplete.");
+                        // Role/roster updates precede this response on the same ordered connection.
+                        CompleteResponse(session, message);
                         break;
                     case "SnapshotManifest":
                     case "SnapshotChunk":
@@ -487,7 +593,12 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is not null) Validation.Manifest(message.Manifest);
                         break;
                     case "Started":
-                        session.Epoch = message.Epoch;
+                        lock (_stateSync)
+                        {
+                            if (!ReferenceEquals(_session, session) || session.IsClosed) break;
+                            Interlocked.Exchange(ref session.Epoch, message.Epoch);
+                            Volatile.Write(ref _presences, Array.Empty<PlayerPresence>());
+                        }
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
@@ -563,7 +674,9 @@ public sealed class DedicatedClient : IAsyncDisposable
             {
                 if (Environment.TickCount64 - session.Connection.LastReceived > 20_000)
                 { session.Close("The server heartbeat timed out."); return; }
-                await session.Connection.WriteAsync(new WireMessage { Type = "Ping" }, session.Token).ConfigureAwait(false);
+                var sent = Environment.TickCount64;
+                Interlocked.Exchange(ref session.LastPingSent, sent);
+                await session.Connection.WriteAsync(new WireMessage { Type = "Ping", RequestId = sent }, session.Token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { }
@@ -577,8 +690,29 @@ public sealed class DedicatedClient : IAsyncDisposable
             if (!ReferenceEquals(_session, session)) return;
             Volatile.Write(ref _connected, 0);
             Volatile.Write(ref _canEdit, 0);
+            ClearPresence(session.Generation);
             SetStatus(reason, session.Generation);
         }
+    }
+
+    private static bool ValidPlayers(IReadOnlyList<PlayerInfo>? players) => players is not null && players.Count <= 4096 &&
+        players.All(p => p is not null && p.Id > 0 && p.Name is { Length: > 0 and <= 80 } &&
+            !p.Name.Any(char.IsControl) && p.ColorIndex is >= 0 and < PresenceRules.ColorCount &&
+            p.LatencyMilliseconds is >= -1 and <= 60_000) && players.Select(p => p.Id).Distinct().Count() == players.Count;
+
+    // Called under _stateSync. The generation check also covers delayed disconnect notifications.
+    private void ClearPresence(long generation)
+    {
+        Interlocked.Exchange(ref _playerId, 0);
+        Volatile.Write(ref _checkpointOwner, 0);
+        Volatile.Write(ref _isHost, 0);
+        Volatile.Write(ref _latencyMilliseconds, -1);
+        Volatile.Write(ref _players, Array.Empty<PlayerInfo>());
+        Volatile.Write(ref _presences, Array.Empty<PlayerPresence>());
+        _notifications.Writer.TryWrite(() =>
+        {
+            if (generation == Volatile.Read(ref _notificationGeneration)) PlayersChanged?.Invoke(Array.Empty<PlayerInfo>());
+        });
     }
 
     /// <summary>Orders observer callbacks and drops anything belonging to a superseded connection.</summary>
@@ -649,6 +783,9 @@ public sealed class DedicatedClient : IAsyncDisposable
         internal Task Completion = Task.CompletedTask;
         internal long LastRevision;
         internal long Epoch = -1;
+        internal int PresenceWriteInFlight;
+        internal long LastPresenceSent = long.MinValue / 2;
+        internal long LastPingSent;
         internal readonly long Generation;
         internal readonly CancellationToken Token;
         internal bool IsClosed => Volatile.Read(ref _closed) != 0;

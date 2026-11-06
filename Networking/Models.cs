@@ -5,8 +5,8 @@ namespace TurboTick.Networking;
 /// <summary>Values shared by this standalone protocol, with no game assembly dependencies.</summary>
 public static class NetworkProtocol
 {
-    public const int Version = 2;
-    public const string ClientVersion = "0.4.0";
+    public const int Version = 4;
+    public const string ClientVersion = "0.5.0";
     public const int MaximumFrameLength = 4 * 1024 * 1024;
     public const int SnapshotChunkSize = 256 * 1024;
 }
@@ -40,7 +40,43 @@ public sealed record SpeedPolicy(bool Enabled = true, float Multiplier = 2f, flo
 }
 
 public sealed record ModFingerprint(string PackageId, string ContentHash);
-public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = "0.4.0");
+public sealed record ClientHello(string PlayerName, string GameVersion, string ModHash, string ClientVersion = NetworkProtocol.ClientVersion);
+
+/// <summary>Transient, server-assigned room identity. Color is deterministic for the same player name,
+/// including reconnects; it never consumes the simulation random stream.</summary>
+public sealed record PlayerInfo(long Id, string Name, int ColorIndex, bool CanEdit, bool IsCheckpointOwner,
+    int LatencyMilliseconds = -1, bool IsHost = false);
+
+public enum PlayerActivity { Lobby, Synchronizing, Playing, Faulted }
+
+/// <summary>Presentation only. MapId is Map.uniqueID, not the mutable map-list index.
+/// MapId -1 means outside a map; Visible false retains map/activity but hides the pointer.</summary>
+public sealed record PresenceUpdate(long Epoch, int MapId = -1, float X = 0, float Z = 0,
+    bool Visible = false, PlayerActivity Activity = PlayerActivity.Lobby);
+
+/// <summary>The relay binds PlayerId to the socket. UpdatedAtMilliseconds is replaced with local
+/// monotonic receive time by the client; it is never a synchronized simulation timestamp.</summary>
+public sealed record PlayerPresence(long PlayerId, PresenceUpdate State, long UpdatedAtMilliseconds = 0);
+
+public static class PresenceRules
+{
+    public const int SendIntervalMilliseconds = 100;
+    public const int KeepAliveMilliseconds = 1000;
+    public const int StaleMilliseconds = 3500;
+    public const int ColorCount = 12;
+
+    public static int ColorForName(string name)
+    {
+        uint hash = 2166136261;
+        foreach (var c in name) hash = unchecked((hash ^ c) * 16777619);
+        return (int)(hash % ColorCount);
+    }
+
+    public static bool IsValid(PresenceUpdate? state) => state is not null && state.Epoch >= -1 &&
+        state.MapId is >= -1 and <= 1_000_000 && float.IsFinite(state.X) && float.IsFinite(state.Z) &&
+        state.X is >= 0 and <= 1_000_000 && state.Z is >= 0 and <= 1_000_000 &&
+        (!state.Visible || state.MapId >= 0) && Enum.IsDefined(state.Activity);
+}
 
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
 public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0);

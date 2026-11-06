@@ -3,23 +3,61 @@ name: build
 on:
   push:
     branches: [ main ]
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-test-package:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+      - name: Validate release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          $modVersion = ([xml](Get-Content About/About.xml -Raw)).ModMetaData.modVersion
+          if ($version -ne $modVersion) { throw 'Mod and repository versions differ.' }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Release tag and source version differ.' }
+          "value=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: Build, integration tests, package
         shell: pwsh
         run: ./scripts/package.ps1
-      - name: Upload mod and independent server
+      - name: Upload runtime packages
         uses: actions/upload-artifact@v4
         with:
-          name: TurboTick-rimworld-1.7
-          path: artifacts/*.zip
+          name: TurboTick-${{ steps.version.outputs.value }}-rimworld-1.7
+          path: |
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-mod-1.7.zip
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-server.zip
           if-no-files-found: error
+          retention-days: 7
+      - name: Publish stable GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TurboTick ${{ steps.version.outputs.value }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-mod-1.7.zip
+            artifacts/TurboTick-${{ steps.version.outputs.value }}-server.zip
+          body: |
+            - 主菜单多人大厅：先连接专服并确认房主身份，再选择已有存档或新建殖民地。
+            - 新增玩家指针、名单、延迟及可折叠联机面板。
+            - 修复取消蓝图、删除区域的补丁定位及重复菜单入口。
+            - 发布内容仅包含运行文件和必要使用说明。
+
+            RimWorld 1.7；客户端与专服需配套更新，网络协议 v4。
+            Docker：`ghcr.io/lumidust/turbotick-server:${{ steps.version.outputs.value }}`

@@ -43,18 +43,24 @@ public class TurboGameComponent : GameComponent
     {
         if (!TurboState.Authority.SessionRequested)
             TurboState.Authority.SetLocal(savedEnabled, Math.Clamp(savedMultiplier, 1f, 20f), Math.Clamp(savedCap, 1f, 240f));
-        if (ownerGame is not null) SharedColony.ScheduleWorldLoaded(ownerGame, WorldLoadScope.CurrentSave,
-            hasRandomState ? savedRandomState : null, stableSnapshotIds);
+        if (ownerGame is not null)
+        {
+            SharedColony.ScheduleWorldLoaded(ownerGame, WorldLoadScope.CurrentSave,
+                hasRandomState ? savedRandomState : null, stableSnapshotIds);
+            MultiplayerHosting.GameReady(ownerGame, WorldLoadScope.CurrentSave, newGame: false);
+        }
     }
 
     public override void StartedNewGame()
     {
         if (!TurboState.Authority.SessionRequested) TurboState.InitializeLocal(TurboTickMod.Settings);
+        if (ownerGame is not null) MultiplayerHosting.GameReady(ownerGame, null, newGame: true);
     }
 
     public override void GameComponentUpdate()
     {
         TurboState.Update();
+        MultiplayerHosting.Update();
         RoomConnection.AutoConnectOnce();
         SharedColony.Update();
     }

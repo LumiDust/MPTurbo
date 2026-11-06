@@ -71,6 +71,11 @@ public static class PatchInstaller
         Try(harmony, "native-controls", typeof(NativeControlsPatch));
         Try(harmony, "native-speed", typeof(NativeSpeedSetterPatch));
         Try(harmony, "native-pause", typeof(NativePausePatch));
+        Try(harmony, "multiplayer-menu-scope", typeof(MultiplayerMenuScope));
+        Try(harmony, "multiplayer-menu-option", typeof(MultiplayerMenuOption));
+        Try(harmony, "multiplayer-entry-update", typeof(MultiplayerEntryUpdate));
+        Try(harmony, "multiplayer-return", typeof(MultiplayerReturnToMenu));
+        Try(harmony, "multiplayer-shutdown", typeof(MultiplayerShutdown));
         // Without the gate a peer could simulate past the server and diverge; without capture nothing syncs.
         AllCritical = status.GetValueOrDefault("simulation-rng")
             && status.GetValueOrDefault("environment-state")

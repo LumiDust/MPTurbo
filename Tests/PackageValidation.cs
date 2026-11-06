@@ -20,6 +20,8 @@ static class PackageValidation
         var buildVersion = XDocument.Load(Path.Combine(root, "Directory.Build.props"))
             .Root!.Element("PropertyGroup")!.Element("Version")!.Value;
         Require(about.Element("modVersion")?.Value == buildVersion, "single release version agrees with mod metadata");
+        Require(TurboTick.Networking.NetworkProtocol.ClientVersion == buildVersion,
+            "handshake version agrees with the mod and server release");
         var expectedAssemblyVersion = new Version(buildVersion + ".0");
         var readme = File.ReadAllText(Path.Combine(root, "README.md"));
         Require(!readme.Contains("MPTurbo", StringComparison.OrdinalIgnoreCase), "legacy product name remains in README");

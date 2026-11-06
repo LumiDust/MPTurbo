@@ -1,5 +1,5 @@
 # Build stage
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy project files for layer caching
@@ -12,7 +12,7 @@ RUN dotnet restore "Server/TurboTick.Server.csproj"
 COPY ["Networking/", "Networking/"]
 COPY ["Server/", "Server/"]
 WORKDIR /src/Server
-RUN dotnet publish "TurboTick.Server.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "TurboTick.Server.csproj" -c Release -o /app/publish /p:UseAppHost=false /p:DebugType=None /p:DebugSymbols=false
 
 # Runtime stage
 FROM mcr.microsoft.com/dotnet/runtime:10.0 AS runtime
@@ -27,6 +27,13 @@ ENV TURBOTICK_HOST=0.0.0.0 \
 RUN mkdir -p /data && chown -R app:app /data /app
 
 COPY --from=build --chown=app:app /app/publish .
+COPY --chown=app:app LICENSE ./LICENSE
+
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="TurboTick dedicated server" \
+      org.opencontainers.image.version="$VERSION" \
+      org.opencontainers.image.source="https://github.com/LumiDust/TurboTick" \
+      org.opencontainers.image.licenses="MIT"
 
 USER app
 VOLUME /data

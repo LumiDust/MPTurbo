@@ -17,6 +17,19 @@ artifacts/
 **/About/PublishedFileId.txt
 workshop-local/
 
+# Generated mod assemblies (CI builds these from source)
+/1.7/Assemblies/
+
+# Local research, manual validation notes and publishing drafts
+/docs/
+/CHANGELOG.md
+/CONTRIBUTING.md
+/.github/PULL_REQUEST_TEMPLATE.md
+*.log
+*.rws
+*.snapshot
+*.tmp
+
 # OS
 Thumbs.db
 desktop.ini

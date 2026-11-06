@@ -34,7 +34,7 @@ static async Task<int> RunAsync(string[] arguments)
                 Console.WriteLine("--data DIRECTORY     Persistent state and snapshots (default Saved)");
                 Console.WriteLine("--game-version VER   1.7 locks to first complete 1.7.x peer, or specify exact version");
                 Console.WriteLine("--mod-hash HASH      Exact simulation hash; development locks to first peer");
-                Console.WriteLine("--controller-only    Only the first active peer may edit policies");
+                Console.WriteLine("--controller-only    One server-assigned controller; transfers to the host when claimed");
                 Console.WriteLine("--import FILE        Import a local snapshot before accepting players");
                 return 0;
             }
@@ -69,8 +69,8 @@ static async Task<int> RunAsync(string[] arguments)
             }
             await server.StartAsync(shutdown.Token);
             Console.WriteLine($"TurboTick protocol {NetworkProtocol.Version}, client {NetworkProtocol.ClientVersion}; listening on {options.Address}:{server.Port}.");
-            Console.WriteLine(options.EveryoneCanEdit ? "Policy editing: every joined peer." : "Policy editing: first active peer (server-assigned controller).");
-            Console.WriteLine("This foundation synchronizes rate policy and snapshot downloads; full colony simulation synchronization is not implemented.");
+            Console.WriteLine(options.EveryoneCanEdit ? "Policy editing: every joined peer." : "Policy editing: one server-assigned controller; transfers to a claimed host.");
+            Console.WriteLine("Hosting: connect and claim the host role before publishing a colony; other players join the same dedicated server.");
             string? loggedVersion = null;
             string? loggedHash = null;
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));

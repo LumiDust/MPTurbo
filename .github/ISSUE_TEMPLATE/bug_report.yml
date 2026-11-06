@@ -7,7 +7,7 @@ body:
     id: version
     attributes:
       label: TurboTick 与 RimWorld 完整版本
-      placeholder: "TurboTick 0.3.0 / RimWorld 1.7.xxxx"
+      placeholder: "TurboTick 0.5.0 / RimWorld 1.7.xxxx"
     validations:
       required: true
   - type: textarea

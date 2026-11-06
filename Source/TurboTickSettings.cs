@@ -11,6 +11,7 @@ public class TurboTickSettings : ModSettings
     public float multiplier = 2f;
     public float maxRateCap = 60f;
     public bool showHud = true;
+    public bool showPlayerCursors = true;
     /// <summary>Detected divergence: reconnect and catch up from the server's checkpoint automatically.</summary>
     public bool autoRecover = true;
     /// <summary>Transport loading sync - unverified in game, therefore off by default.</summary>
@@ -29,6 +30,7 @@ public class TurboTickSettings : ModSettings
         Scribe_Values.Look(ref multiplier, "multiplier", 2f);
         Scribe_Values.Look(ref maxRateCap, "maxRateCap", 60f);
         Scribe_Values.Look(ref showHud, "showHud", true);
+        Scribe_Values.Look(ref showPlayerCursors, "showPlayerCursors", true);
         Scribe_Values.Look(ref autoRecover, "autoRecover", true);
         Scribe_Values.Look(ref experimentalInteractions, "experimentalInteractions", false);
         Scribe_Values.Look(ref everyoneMayTrade, "everyoneMayTrade", false);
@@ -42,6 +44,7 @@ public class TurboTickSettings : ModSettings
     {
         var listing = new Listing_Standard();
         listing.Begin(area);
+        if (Widgets.ButtonText(listing.GetRect(34f), T("TurboTick_OpenLobby"))) MultiplayerWindow.Open();
         listing.Label(T("TurboTick_Prototype"), 48f);
         ServerHost = Field(listing, T("TurboTick_Host"), ServerHost);
         ServerPort = Field(listing, T("TurboTick_Port"), ServerPort);
@@ -57,12 +60,13 @@ public class TurboTickSettings : ModSettings
 
         listing.Label(T("TurboTick_NativeControls"), 54f);
         listing.CheckboxLabeled(T("TurboTick_ShowHud"), ref showHud, T("TurboTick_ShowHudDesc"));
+        listing.CheckboxLabeled(T("TurboTick_ShowPlayerCursors"), ref showPlayerCursors, T("TurboTick_ShowPlayerCursorsDesc"));
         listing.CheckboxLabeled(T("TurboTick_AutoRecover"), ref autoRecover, T("TurboTick_AutoRecoverDesc"));
         listing.CheckboxLabeled(T("TurboTick_Experimental"), ref experimentalInteractions, T("TurboTick_ExperimentalDesc"));
         listing.CheckboxLabeled(T("TurboTick_EveryoneTrades"), ref everyoneMayTrade, T("TurboTick_EveryoneTradesDesc"));
         listing.Gap(6f);
         var shared = listing.GetRect(30f);
-        if (Widgets.ButtonText(new Rect(shared.x, shared.y, 320f, 28f), T("TurboTick_StartShared"), true, true, TurboState.Authority.SessionConnected && RoomConnection.CanEdit))
+        if (Widgets.ButtonText(new Rect(shared.x, shared.y, 320f, 28f), T("TurboTick_StartShared"), true, true, RoomConnection.IsHost && RoomConnection.Client?.PresenceEpoch == -1 && Current.ProgramState == ProgramState.Playing))
             RoomConnection.StartSharedColony();
         listing.Gap(6f);
         var cache = listing.GetRect(30f);

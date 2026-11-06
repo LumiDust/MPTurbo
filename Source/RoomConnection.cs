@@ -17,6 +17,7 @@ internal static class RoomConnection
     public static string Fingerprint { get; private set; } = "尚未生成";
     public static string SnapshotStatus { get; private set; } = "尚未下载；此阶段只缓存快照，不自动载入游戏";
     public static bool Busy { get; private set; }
+    internal static DedicatedClient? Client => client;
     public static bool CanEdit => !TurboState.Authority.SessionRequested
         || (TurboState.Authority.SessionConnected && client?.CanEdit == true);
 
@@ -27,7 +28,12 @@ internal static class RoomConnection
         Log.Message("[TurboTick] " + text);
     }
 
-    public static void Connect(TurboTickSettings settings)
+    internal static int SessionGeneration => generation;
+    public static bool IsHost => !Busy && client?.IsConnected == true && client.IsHost && TurboState.Authority.SessionConnected;
+    public static bool HostRequested { get; private set; }
+    public static string Endpoint { get; private set; } = "";
+
+    public static void Connect(TurboTickSettings settings, bool asHost = false)
     {
         SetStatus("开始连接 " + settings.ServerHost.Trim() + ":" + settings.ServerPort);
         // Must run on the game thread before starting the background hash/connection operation.
@@ -41,10 +47,21 @@ internal static class RoomConnection
             return;
         }
         var name = settings.PlayerName.Trim();
-        if (name.Length is < 1 or > 32) { SetStatus("玩家名称须为 1..32 字符"); return; }
+        if (name.Length is < 1 or > 32 || name.Any(char.IsControl)) { SetStatus(TurboTickSettings.T("TurboTick_InvalidName")); return; }
         reconnectTarget = new TurboTickSettings { ServerHost = host, ServerPort = port.ToString(), PlayerName = name };
         Leave();
+        HostRequested = asHost;
+        Endpoint = (host.Contains(':') ? "[" + host + "]" : host) + ":" + port;
         var id = ++generation;
+        var roleConfirmed = !asHost;
+        string? connectionFailure = null;
+        var pendingWorldEvents = new List<Action>();
+        void PostWorld(Action action) => Post(id, () =>
+        {
+            if (connectionFailure != null) return;
+            if (roleConfirmed) action();
+            else pendingWorldEvents.Add(action);
+        });
         var cancel = lifetime = new CancellationTokenSource();
         var socket = client = new DedicatedClient();
         TurboState.Authority.BeginSession();
@@ -56,14 +73,13 @@ internal static class RoomConnection
             TurboState.Authority.ApplyServer(policy);
             NativeSpeedSync.ApplyConfirmed();
             SetStatus("房间已连接 · 服务端设置修订 " + policy.Revision);
-            if (publishOnConnect && !publishedOnce) { publishedOnce = true; StartSharedColony(); }
         });
         socket.StatusChanged += text => Post(id, () =>
         {
-            SetStatus(text);
+            SetStatus(connectionFailure ?? text);
             if (!socket.IsConnected) TurboState.Authority.ConnectionLost();
         });
-        socket.WorldStarted += (session, manifest) => Post(id, () =>
+        socket.WorldStarted += (session, manifest) => PostWorld(() =>
         {
             Status = "共享殖民地已开始，正在同步存档…";
             // Even the publisher loads the accepted snapshot; origin does not prove its live state still
@@ -71,11 +87,11 @@ internal static class RoomConnection
             SharedColony.OnWorldStarted(session, manifest);
             DownloadAndLoad(manifest, id, SharedColony.Session.LoadGeneration);
         });
-        socket.Ticked += tick => Post(id, () => SharedColony.OnTick(tick));
-        socket.CommandsReceived += commands => Post(id, () => SharedColony.OnCommands(commands));
-        socket.DesyncDetected += (tick, detail) => Post(id, () => SharedColony.OnDesync(tick, detail));
-        socket.CheckpointRequested += () => Post(id, () => PublishCheckpoint(SharedColony.Session.Barrier.AppliedTick));
-        socket.CatchUpIncomplete += () => Post(id, () =>
+        socket.Ticked += tick => PostWorld(() => SharedColony.OnTick(tick));
+        socket.CommandsReceived += commands => PostWorld(() => SharedColony.OnCommands(commands));
+        socket.DesyncDetected += (tick, detail) => PostWorld(() => SharedColony.OnDesync(tick, detail));
+        socket.CheckpointRequested += () => PostWorld(() => PublishCheckpoint(SharedColony.Session.Barrier.AppliedTick));
+        socket.CatchUpIncomplete += () => PostWorld(() =>
         {
             const string reason = "服务器命令历史已截断，无法完整追平；等待控制者检查点后重连";
             SharedColony.OnWorldLoadFailed(reason);
@@ -90,15 +106,37 @@ internal static class RoomConnection
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
                 timeout.CancelAfter(TimeSpan.FromSeconds(15));
                 await socket.ConnectAsync(host, port, hello, timeout.Token).ConfigureAwait(false);
+                if (asHost) await socket.ClaimHostAsync(timeout.Token).ConfigureAwait(false);
                 Post(id, () =>
                 {
+                    roleConfirmed = true;
+                    Busy = false;
                     if (socket.CurrentPolicy != null) TurboState.Authority.ApplyServer(socket.CurrentPolicy);
-                    Status = "房间已连接 · 倍率由专用服务器管理（共享殖民地同步开发中）";
+                    Status = TurboTickSettings.T(asHost ? "TurboTick_HostRoleReady" : "TurboTick_WaitForHost");
+                    // Preserve Started/Commands/Tick ordering while the host claim was in flight. A failed
+                    // host request must never start loading another room's world behind the error dialog.
+                    foreach (var action in pendingWorldEvents)
+                    {
+                        if (id != generation) break;
+                        action();
+                    }
+                    pendingWorldEvents.Clear();
+                    if (id == generation && publishOnConnect && !publishedOnce && IsHost && socket.PresenceEpoch < 0)
+                    { publishedOnce = true; StartSharedColony(); }
                 });
             }
             catch (Exception error)
             {
-                Post(id, () => { TurboState.Authority.ConnectionLost(); Status = "连接未完成：" + error.Message; });
+                try { await socket.DisconnectAsync().ConfigureAwait(false); } catch (Exception) { }
+                Post(id, () =>
+                {
+                    pendingWorldEvents.Clear();
+                    TurboState.Authority.ConnectionLost();
+                    connectionFailure = error is NetworkException { Code: "HostOccupied" }
+                        ? TurboTickSettings.T("TurboTick_HostOccupied")
+                        : TurboTickSettings.T("TurboTick_ConnectionFailed", error.Message);
+                    SetStatus(connectionFailure);
+                });
             }
             finally { Post(id, () => Busy = false); }
         }));
@@ -147,7 +185,7 @@ internal static class RoomConnection
         }
     }
 
-    /// <summary>Controller action: publish the current save as the shared world, then start the session.</summary>
+    /// <summary>Dedicated-server host action: publish the chosen colony over the existing connection.</summary>
     public static void StartSharedColony()
     {
         if (client?.IsConnected != true) { Status = "先连接服务器"; return; }
@@ -156,17 +194,23 @@ internal static class RoomConnection
             Status = "本机补丁不完整，无法开启共享殖民地（见诊断信息）";
             return;
         }
-        if (!CanEdit) { Status = "只有服务器控制者可以发布并开始共享殖民地"; return; }
+        if (!IsHost) { Status = TurboTickSettings.T("TurboTick_HostConnectFirst"); return; }
+        if (client.PresenceEpoch >= 0) { Status = TurboTickSettings.T("TurboTick_ServerWorldContinues"); return; }
+        if (Current.ProgramState != ProgramState.Playing) { Status = TurboTickSettings.T("TurboTick_ChooseSave"); return; }
         var socket = client;
         var id = generation;
         var token = lifetime!.Token;
         Status = "正在保存当前殖民地…";
         SharedColony.HoldForPublication();
-        string path;
-        try { path = WorldFiles.SaveCurrentGame(); }
+        byte[] bytes;
+        SnapshotManifest manifest;
+        try
+        {
+            var path = WorldFiles.SaveCurrentGame();
+            bytes = File.ReadAllBytes(path);
+            manifest = WorldFiles.Describe(bytes);
+        }
         catch (Exception error) { SharedColony.OnWorldLoadFailed(error.Message); Status = "保存失败：" + error.Message; return; }
-        var bytes = File.ReadAllBytes(path);
-        var manifest = WorldFiles.Describe(bytes);
         SimulationDiagnostics.Boundary("snapshot-created", manifest.Id);
         Status = "正在上传存档（" + bytes.Length / 1024 + " KiB）…";
         Track(Task.Run(async () =>
@@ -240,6 +284,7 @@ internal static class RoomConnection
     {
         if (autoConnectTried) return;
         autoConnectTried = true;
+        if (TurboState.Authority.SessionRequested || MultiplayerHosting.Pending || MultiplayerHosting.IsHosting) return;
         // Automated acceptance runs pass -turbotick-connect=host:port on the command line.
         string? argument = null;
         if (GenCommandLine.TryGetCommandLineArg("turbotick-connect", out argument) && !string.IsNullOrWhiteSpace(argument))
@@ -255,7 +300,7 @@ internal static class RoomConnection
             };
             publishOnConnect = GenCommandLine.CommandLineArgPassed("turbotick-publish");
             Log.Message("[TurboTick] 命令行自动连接：" + commandLineSettings.ServerHost + ":" + port);
-            Connect(commandLineSettings);
+            Connect(commandLineSettings, asHost: publishOnConnect);
             return;
         }
         var settings = TurboTickMod.Settings;
@@ -271,7 +316,7 @@ internal static class RoomConnection
     {
         var settings = reconnectTarget;
         if (settings == null || string.IsNullOrWhiteSpace(settings.ServerHost)) return;
-        Connect(settings);
+        Connect(settings, asHost: HostRequested && client?.PresenceEpoch == -1);
     }
     private static int checkpointing;
 
@@ -340,6 +385,10 @@ internal static class RoomConnection
 
     public static void Leave()
     {
+        MultiplayerHosting.Cancel();
+        HostRequested = false;
+        Endpoint = "";
+        PlayerPresence.Reset();
         ++generation; // Drop all queued actions from an old socket, including late disconnect events.
         lifetime?.Cancel();
         lifetime?.Dispose();
@@ -360,6 +409,7 @@ internal static class RoomConnection
         for (int n = 0; n < 128 && gameActions.TryDequeue(out var action); n++)
             try { action(); } catch (Exception error) { Log.Warning("[TurboTick] " + error.Message); }
         operations.RemoveAll(task => task.IsCompleted);
+        PlayerPresence.Update();
     }
 
     private static void Post(int id, Action action) => gameActions.Enqueue(() => { if (id == generation) action(); });

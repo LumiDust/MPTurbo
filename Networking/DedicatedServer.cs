@@ -22,12 +22,17 @@ public sealed class DedicatedServer : IAsyncDisposable
     private string? _lockedGameVersion;
     private string? _lockedModHash;
     private long? _controllerId;
+    private long? _hostId; // A room host exists only after an explicit successful ClaimHost.
     private long _nextPeer;
     private int _port;
     private int _disposed;
 
     // Shared-colony session: the server owns epoch, tick and command sequencing.
-    private readonly ConcurrentDictionary<string, ConcurrentDictionary<int, byte[]>> _worldUploads = new();
+    private sealed record WorldUpload(bool Checkpoint, long Epoch, int Tick)
+    {
+        internal readonly Dictionary<int, byte[]> Chunks = [];
+    }
+    private readonly ConcurrentDictionary<(long Peer, string Id), WorldUpload> _worldUploads = new();
     private SnapshotManifest? _worldManifest;
     private long _epoch = -1;
     private int _tick;
@@ -158,6 +163,9 @@ public sealed class DedicatedServer : IAsyncDisposable
             _run = null;
             _listener = null;
             _controllerId = null;
+            _hostId = null;
+            _checkpointOwnerId = null;
+            _worldUploads.Clear();
         }
         finally { _lifecycle.Release(); }
     }
@@ -291,14 +299,19 @@ public sealed class DedicatedServer : IAsyncDisposable
             }
             peer.CanEdit = _options.EveryoneCanEdit || _controllerId is null;
             if (!_options.EveryoneCanEdit && _controllerId is null) _controllerId = peer.Id;
-            peer.Joined = true;
+            peer.PlayerName = hello.PlayerName;
+            peer.ColorIndex = PresenceRules.ColorForName(hello.PlayerName);
             if (_checkpointOwnerId is null) _checkpointOwnerId = peer.Id;
             peer.Queue(new WireMessage
             {
-                Type = "Welcome", Policy = _policy, CanEdit = peer.CanEdit,
+                Type = "Welcome", Policy = _policy, CanEdit = peer.CanEdit, IsHost = _hostId == peer.Id,
                 GameVersion = version, ModHash = modHash, ClientVersion = NetworkProtocol.ClientVersion,
-                CheckpointOwner = _checkpointOwnerId == peer.Id
+                CheckpointOwner = _checkpointOwnerId == peer.Id,
+                PlayerId = peer.Id, Players = CapturePlayers(peer), Epoch = Epoch
             });
+            peer.Joined = true; // No other broadcast can overtake Welcome on this peer's FIFO.
+            BroadcastPlayers();
+            // Do not replay pointer history to a joiner. Each peer sends a one-second keepalive.
             // A peer arriving after the start waits for a fresh checkpoint: replaying thousands of ticks
             // would re-simulate the colony and diverge. The owner is asked for a snapshot at its current tick.
             if (GameRunning)
@@ -320,7 +333,25 @@ public sealed class DedicatedServer : IAsyncDisposable
         switch (message.Type)
         {
             case "Ping": peer.Queue(new WireMessage { Type = "Pong", RequestId = message.RequestId }); return;
-            case "Pong": return;
+            case "Pong":
+                if (message.RequestId > 0 && message.RequestId == Interlocked.Read(ref peer.LastPingSent))
+                {
+                    await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+                    try
+                    {
+                        peer.LatencyMilliseconds = (int)Math.Clamp(Environment.TickCount64 - message.RequestId, 0, 60_000);
+                        BroadcastPlayers();
+                    }
+                    finally { _stateGate.Release(); }
+                }
+                return;
+            case "Presence":
+                RelayPresence(peer, message);
+                return;
+            case "ClaimHost":
+                RequireRequestId(message);
+                await ClaimHostAsync(peer, message).ConfigureAwait(false);
+                return;
             case "SetSpeed":
                 RequireRequestId(message);
                 await SetSpeedAsync(peer, message).ConfigureAwait(false);
@@ -375,26 +406,128 @@ public sealed class DedicatedServer : IAsyncDisposable
         }
     }
 
+    private PlayerInfo[] CapturePlayers(Peer? joining = null) => _peers.Values.Where(p => (p.Joined || ReferenceEquals(p, joining)) && !p.Token.IsCancellationRequested)
+        .OrderBy(p => p.Id).Select(p => new PlayerInfo(p.Id, p.PlayerName, p.ColorIndex, p.CanEdit,
+            _checkpointOwnerId == p.Id, p.LatencyMilliseconds, _hostId == p.Id)).ToArray();
+
+    // Roster changes are serialized by _stateGate; pointer packets never enter _commandGate/history.
+    private void BroadcastPlayers()
+    {
+        var message = new WireMessage { Type = "Players", Players = CapturePlayers() };
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined) recipient.Queue(message);
+    }
+
+    private void RefreshEditingRoles()
+    {
+        foreach (var peer in _peers.Values)
+            if (peer.Joined) peer.CanEdit = _options.EveryoneCanEdit || _controllerId == peer.Id;
+    }
+
+    // Caller holds _stateGate. Role acknowledgements precede the corresponding roster/RPC response.
+    private void BroadcastRoles()
+    {
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined)
+            {
+                recipient.Queue(new WireMessage { Type = "Role", CanEdit = recipient.CanEdit, IsHost = _hostId == recipient.Id });
+                recipient.Queue(new WireMessage { Type = "CheckpointRole", CheckpointOwner = _checkpointOwnerId == recipient.Id });
+            }
+        BroadcastPlayers();
+    }
+
+    private async Task ClaimHostAsync(Peer peer, WireMessage message)
+    {
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+        try
+        {
+            if (_hostId is not null && _hostId != peer.Id)
+            {
+                peer.Queue(WireMessage.Error("HostOccupied", "Another player already hosts this room.", message.RequestId));
+                return;
+            }
+            _hostId = peer.Id;
+            // Hosting and checkpoint duties remain distinct. Controller-only rooms have one editor:
+            // an explicit host claim transfers that editing authority instead of creating a second one.
+            if (!_options.EveryoneCanEdit) _controllerId = peer.Id;
+            RefreshEditingRoles();
+            if (!GameRunning) _checkpointOwnerId = peer.Id;
+            BroadcastRoles();
+            peer.Queue(new WireMessage { Type = "HostClaimed", RequestId = message.RequestId, IsHost = true });
+        }
+        finally { _stateGate.Release(); }
+    }
+
+    private bool CanUpload(Peer peer, WireMessage message)
+    {
+        if (message.Checkpoint ? _checkpointOwnerId != peer.Id : _hostId != peer.Id)
+        {
+            peer.Queue(WireMessage.Error(message.Checkpoint ? "NotCheckpointOwner" : "HostOnly",
+                message.Checkpoint ? "Only the checkpoint owner may publish checkpoints." : "Only the room host may publish the initial world.", message.RequestId));
+            return false;
+        }
+        if (message.Epoch != Epoch)
+        {
+            peer.Queue(WireMessage.Error("SessionChanged", "The upload belongs to an earlier world epoch.", message.RequestId));
+            return false;
+        }
+        if (message.Checkpoint && (!GameRunning || message.Tick < 0 || message.Tick > Tick))
+        {
+            peer.Queue(WireMessage.Error("InvalidCheckpoint", "The checkpoint tick must be inside the running session.", message.RequestId));
+            return false;
+        }
+        return true;
+    }
+
+    private void RelayPresence(Peer peer, WireMessage message)
+    {
+        var state = message.Presence;
+        if (!PresenceRules.IsValid(state))
+        {
+            peer.TryQueue(WireMessage.Error("InvalidPresence", "Presence requires a finite map position and known activity."));
+            return;
+        }
+        // Epoch and identity come from the live connection. A stale world sample is simply discarded.
+        if (state!.Epoch != Epoch || !peer.TryConsumePresenceBudget()) return;
+        var relayed = new WireMessage { Type = "Presence", PlayerPresence = new PlayerPresence(peer.Id, state) };
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined && recipient.Id != peer.Id) recipient.TryQueue(relayed);
+    }
+
     private async Task PublishWorldChunkAsync(Peer peer, WireMessage message)
     {
-        if (!peer.CanEdit) { peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may publish the world.", message.RequestId)); return; }
-        var uploadId = message.UploadId;
-        if (string.IsNullOrWhiteSpace(uploadId) || uploadId.Length > 64 || uploadId.Any(char.IsControl))
-        { peer.Queue(WireMessage.Error("InvalidUpload", "A printable upload id is required.", message.RequestId)); return; }
-        var data = message.WorldChunk;
-        if (message.ChunkIndex < 0 || data is null || data.Length is < 1 or > NetworkProtocol.SnapshotChunkSize)
-        { peer.Queue(WireMessage.Error("InvalidUpload", "The world chunk index or size is invalid.", message.RequestId)); return; }
-        _worldUploads.GetOrAdd(uploadId, _ => new ConcurrentDictionary<int, byte[]>())[message.ChunkIndex] = data;
-        peer.Queue(new WireMessage { Type = "WorldChunkAccepted", RequestId = message.RequestId, ChunkIndex = message.ChunkIndex });
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
+        try
+        {
+            if (!CanUpload(peer, message)) return;
+            var uploadId = message.UploadId;
+            if (string.IsNullOrWhiteSpace(uploadId) || uploadId.Length > 64 || uploadId.Any(char.IsControl))
+            { peer.Queue(WireMessage.Error("InvalidUpload", "A printable upload id is required.", message.RequestId)); return; }
+            var data = message.WorldChunk;
+            if (message.ChunkIndex < 0 || data is null || data.Length is < 1 or > NetworkProtocol.SnapshotChunkSize)
+            { peer.Queue(WireMessage.Error("InvalidUpload", "The world chunk index or size is invalid.", message.RequestId)); return; }
+            var upload = _worldUploads.GetOrAdd((peer.Id, uploadId), _ => new WorldUpload(message.Checkpoint, message.Epoch, message.Tick));
+            if (upload.Checkpoint != message.Checkpoint || upload.Epoch != message.Epoch || upload.Tick != message.Tick)
+            { peer.Queue(WireMessage.Error("InvalidUpload", "An upload cannot change its purpose, epoch or checkpoint tick.", message.RequestId)); return; }
+            upload.Chunks[message.ChunkIndex] = data;
+            peer.Queue(new WireMessage { Type = "WorldChunkAccepted", RequestId = message.RequestId, ChunkIndex = message.ChunkIndex });
+        }
+        finally { _stateGate.Release(); }
     }
 
     private async Task CommitWorldAsync(Peer peer, WireMessage message)
     {
-        if (!peer.CanEdit) { peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may publish the world.", message.RequestId)); return; }
-        if (string.IsNullOrWhiteSpace(message.UploadId) || !_worldUploads.TryRemove(message.UploadId, out var chunks) || chunks.Count == 0)
-        { peer.Queue(WireMessage.Error("WorldMissing", "There is no matching world upload.", message.RequestId)); return; }
+        // Keep permission checks and publication atomic with role/epoch changes, including disk work.
+        await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            if (!CanUpload(peer, message)) return;
+            if (string.IsNullOrWhiteSpace(message.UploadId) || !_worldUploads.TryRemove((peer.Id, message.UploadId), out var upload) || upload.Chunks.Count == 0)
+            { peer.Queue(WireMessage.Error("WorldMissing", "There is no matching upload owned by this connection.", message.RequestId)); return; }
+            if (upload.Checkpoint != message.Checkpoint || upload.Epoch != message.Epoch || upload.Tick != message.Tick ||
+                message.ChunkCount != upload.Chunks.Count)
+            { peer.Queue(WireMessage.Error("InvalidUpload", "The upload purpose, epoch, tick or chunk count changed.", message.RequestId)); return; }
+            var chunks = upload.Chunks;
             using var buffer = new MemoryStream();
             for (var index = 0; index < chunks.Count; index++)
             {
@@ -406,18 +539,19 @@ public sealed class DedicatedServer : IAsyncDisposable
             var manifest = await Snapshots.PutAsync(buffer, peer.Token).ConfigureAwait(false);
             if (message.Sha256 is { Length: > 0 } expected && !string.Equals(expected, manifest.Id, StringComparison.Ordinal))
             { peer.Queue(WireMessage.Error("WorldHashMismatch", "The server computed a different world hash.", message.RequestId)); return; }
-            Volatile.Write(ref _worldManifest, manifest);
             if (message.Checkpoint)
             {
                 await ApplyCheckpointAsync(peer, message, manifest).ConfigureAwait(false);
                 return;
             }
+            Volatile.Write(ref _worldManifest, manifest);
             foreach (var recipient in _peers.Values)
                 if (recipient.Joined) recipient.Queue(new WireMessage { Type = "World", Manifest = manifest });
             peer.Queue(new WireMessage { Type = "WorldCommitted", RequestId = message.RequestId, Manifest = manifest });
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         { peer.Queue(WireMessage.Error("WorldStoreFailed", "The world snapshot could not be stored.", message.RequestId)); }
+        finally { _stateGate.Release(); }
     }
 
     /// <summary>
@@ -439,6 +573,7 @@ public sealed class DedicatedServer : IAsyncDisposable
         // Trim inside the command gate so a command cannot slip in between the trim and the broadcast.
         lock (_commandGate)
         {
+            Volatile.Write(ref _worldManifest, manifest);
             Volatile.Write(ref _checkpointManifest, manifest);
             Volatile.Write(ref _checkpointTick, message.Tick);
             Console.WriteLine($"[server] checkpoint accepted at tick {message.Tick} ({manifest.Id[..8]})");
@@ -466,13 +601,14 @@ public sealed class DedicatedServer : IAsyncDisposable
 
     private async Task StartGameAsync(Peer peer, WireMessage message)
     {
-        if (!peer.CanEdit) { peer.Queue(WireMessage.Error("ControllerOnly", "Only the server-assigned controller may start the shared colony.", message.RequestId)); return; }
-        var world = WorldManifest;
-        if (world is null) { peer.Queue(WireMessage.Error("WorldMissing", "Publish the world snapshot before starting.", message.RequestId)); return; }
         await _stateGate.WaitAsync(peer.Token).ConfigureAwait(false);
         try
         {
+            if (_hostId != peer.Id) { peer.Queue(WireMessage.Error("HostOnly", "Only the room host may start the shared colony.", message.RequestId)); return; }
+            var world = WorldManifest;
+            if (world is null) { peer.Queue(WireMessage.Error("WorldMissing", "Publish the world snapshot before starting.", message.RequestId)); return; }
             var epoch = Interlocked.Increment(ref _epoch);
+            _worldUploads.Clear();
             Interlocked.Exchange(ref _tick, 0);
             Interlocked.Exchange(ref _commandSequence, 0);
             Volatile.Write(ref _seed, Random.Shared.Next());
@@ -758,27 +894,24 @@ public sealed class DedicatedServer : IAsyncDisposable
         try
         {
             peer.Joined = false;
-            Peer? newOwner = null;
-            if (_checkpointOwnerId == peer.Id)
+            var survivors = _peers.Values.Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
+                .OrderBy(candidate => candidate.Id).ToArray();
+            if (_checkpointOwnerId == peer.Id) _checkpointOwnerId = survivors.FirstOrDefault()?.Id;
+            if (_hostId == peer.Id)
             {
-                var successor = _peers.Values
-                    .Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
-                    .OrderBy(candidate => candidate.Id).FirstOrDefault();
-                _checkpointOwnerId = successor?.Id;
-                newOwner = successor;
+                // A running colony retains continuity; an empty lobby requires another explicit claim.
+                var successor = GameRunning ? survivors.OrderByDescending(candidate => candidate.Id == _checkpointOwnerId)
+                    .ThenBy(candidate => candidate.Id).FirstOrDefault() : null;
+                _hostId = successor?.Id;
             }
-            if (!_options.EveryoneCanEdit && _controllerId == peer.Id)
-            {
-                var successor = _peers.Values.Where(candidate => candidate.Joined && !candidate.Token.IsCancellationRequested)
-                    .OrderBy(candidate => candidate.Id).FirstOrDefault();
-                _controllerId = successor?.Id;
-                if (successor is not null)
-                {
-                    successor.CanEdit = true;
-                    successor.Queue(new WireMessage { Type = "Role", CanEdit = true });
-                }
-            }
-            newOwner?.Queue(new WireMessage { Type = "CheckpointRole", CheckpointOwner = true });
+            if (!_options.EveryoneCanEdit)
+                _controllerId = _hostId ?? (survivors.Any(candidate => candidate.Id == _controllerId)
+                    ? _controllerId : survivors.FirstOrDefault()?.Id);
+            RefreshEditingRoles();
+            foreach (var upload in _worldUploads.Keys)
+                if (upload.Peer == peer.Id) _worldUploads.TryRemove(upload, out _);
+            lock (_pendingJoiners) _pendingJoiners.Remove(peer.Id);
+            BroadcastRoles();
         }
         finally { _stateGate.Release(); }
     }
@@ -833,7 +966,9 @@ public sealed class DedicatedServer : IAsyncDisposable
             {
                 if (!peer.Joined) continue;
                 if (Environment.TickCount64 - peer.Connection.LastReceived > 20_000) { peer.Close(); return; }
-                peer.Queue(new WireMessage { Type = "Ping" });
+                var sent = Environment.TickCount64;
+                Interlocked.Exchange(ref peer.LastPingSent, sent);
+                peer.Queue(new WireMessage { Type = "Ping", RequestId = sent });
             }
         }
         catch (Exception) { peer.Close(); }
@@ -850,6 +985,20 @@ public sealed class DedicatedServer : IAsyncDisposable
         internal readonly CancellationToken Token;
         internal volatile bool Joined;
         internal bool CanEdit;
+        internal string PlayerName = "";
+        internal int ColorIndex;
+        internal int LatencyMilliseconds = -1;
+        internal long LastPingSent;
+        private long _lastPresenceReceived = long.MinValue / 2;
+
+        internal bool TryConsumePresenceBudget()
+        {
+            var now = Environment.TickCount64;
+            // Drop excess advisory packets without an error storm or a gameplay disconnect.
+            if (now - _lastPresenceReceived < PresenceRules.SendIntervalMilliseconds) return false;
+            _lastPresenceReceived = now;
+            return true;
+        }
 
         // Simple sliding window: a client may issue at most 400 commands per second of wall clock.
         private long _commandWindowStart = Environment.TickCount64;

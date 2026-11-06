@@ -47,6 +47,48 @@ async Task Throws(Func<Task> body, string? code = null)
     throw new Exception("Expected operation to fail.");
 }
 
+async Task WritePacket(TcpClient socket, object message)
+{
+    var json = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(message,
+        new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+    var frame = new byte[json.Length + 4];
+    BinaryPrimitives.WriteInt32LittleEndian(frame, json.Length);
+    json.CopyTo(frame.AsSpan(4));
+    await socket.GetStream().WriteAsync(frame);
+}
+
+async Task<System.Text.Json.JsonElement> ReadPacket(TcpClient socket)
+{
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    var header = new byte[4];
+    await socket.GetStream().ReadExactlyAsync(header, timeout.Token);
+    var length = BinaryPrimitives.ReadInt32LittleEndian(header);
+    Check(length is > 0 and <= NetworkProtocol.MaximumFrameLength, "bounded raw response");
+    var bytes = new byte[length];
+    await socket.GetStream().ReadExactlyAsync(bytes, timeout.Token);
+    using var document = System.Text.Json.JsonDocument.Parse(bytes);
+    return document.RootElement.Clone();
+}
+
+async Task<System.Text.Json.JsonElement> ReadReply(TcpClient socket, long id)
+{
+    for (var index = 0; index < 64; index++)
+    {
+        var packet = await ReadPacket(socket);
+        if (packet.GetProperty("type").GetString() == "Ping")
+            await WritePacket(socket, new { type = "Pong", protocolVersion = NetworkProtocol.Version, requestId = packet.GetProperty("requestId").GetInt64() });
+        if (packet.TryGetProperty("requestId", out var request) && request.GetInt64() == id) return packet;
+    }
+    throw new Exception("Raw client did not receive its correlated response.");
+}
+
+async Task RawBarrier(TcpClient socket, long id)
+{
+    await WritePacket(socket, new { type = "GetWorldManifest", protocolVersion = NetworkProtocol.Version, requestId = id });
+    var reply = await ReadReply(socket, id);
+    Check(reply.GetProperty("type").GetString() == "WorldManifest", "raw processing barrier");
+}
+
 await Test("single-player defaults, authoritative enable+value+cap, no local fallback", () =>
 {
     var s = new SpeedAuthority();
@@ -108,6 +150,391 @@ await Test("two clients: one changes, everyone receives same authoritative revis
     await b.SetSpeedAsync(false, 5, 80);
     await Until(() => a.CurrentPolicy?.Revision == 2);
     Check(a.CurrentPolicy == server.CurrentPolicy && !a.CurrentPolicy!.Enabled, "client B can also control");
+});
+
+await Test("host is explicitly claimed after ordinary joins, separate from editing and checkpoints", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-explicit"), EveryoneCanEdit: false));
+    await server.StartAsync();
+    await using var waiting = new DedicatedClient(); await using var host = new DedicatedClient();
+    await waiting.ConnectAsync("127.0.0.1", server.Port, Hello("Waiting"));
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("Host"));
+    Check(!waiting.IsHost && !host.IsHost && waiting.CanEdit && !host.CanEdit && waiting.IsCheckpointOwner,
+        "ordinary joins do not claim host, including the original controller/checkpoint owner");
+    var world = new byte[1024];
+    var manifest = SnapshotBuilder.Describe(world);
+    await Throws(() => waiting.UploadWorldAsync(manifest, new MemoryStream(world)), "HostOnly");
+    await Throws(() => waiting.StartGameAsync(), "HostOnly");
+    await host.ClaimHostAsync();
+    await Until(() => !waiting.IsCheckpointOwner && !waiting.CanEdit && host.IsCheckpointOwner && waiting.Players.Any(p => p.Id == host.PlayerId && p.IsHost));
+    Check(host.IsHost && host.CanEdit && !waiting.CanEdit && !waiting.IsHost && host.Players.Count(p => p.CanEdit) == 1,
+        "controller-only claim migrates the unique editing authority to the later host");
+    await Throws(() => waiting.SetTimeSpeedAsync(2), "ControllerOnly");
+    await host.SetTimeSpeedAsync(0);
+    Check(server.CurrentPolicy.TimeSpeed == 0, "only the later explicit host may control room speed");
+    await Throws(() => waiting.ClaimHostAsync(), "HostOccupied");
+    await host.ClaimHostAsync(); // Same-connection claim is idempotent.
+    await host.UploadWorldAsync(manifest, new MemoryStream(world));
+    await host.StartGameAsync();
+    Check(server.GameRunning && host.IsHost, "only the explicit host publishes and starts");
+});
+
+await Test("host claim is exclusive even when every player can edit", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-race")));
+    await server.StartAsync();
+    var clients = new List<DedicatedClient>();
+    try
+    {
+        for (var index = 0; index < 6; index++)
+        {
+            var client = new DedicatedClient(); clients.Add(client);
+            await client.ConnectAsync("127.0.0.1", server.Port, Hello("Claimant " + index));
+        }
+        Check(clients.All(c => c.CanEdit && !c.IsHost), "everyone-can-edit never implicitly hosts");
+        var claims = await Task.WhenAll(clients.Select(async client =>
+        {
+            try { await client.ClaimHostAsync(); return true; }
+            catch (NetworkException error) when (error.Code == "HostOccupied") { return false; }
+        }));
+        Check(claims.Count(success => success) == 1, "one successful RPC under concurrent claims");
+        await Until(() => clients.All(c => c.Players.Count == 6 && c.Players.Count(p => p.IsHost) == 1));
+        Check(clients.Count(c => c.IsHost) == 1, "one host property after every response");
+        var editor = clients.First(c => !c.IsHost);
+        await Throws(() => editor.UploadWorldAsync(SnapshotBuilder.Describe(new byte[100]), new MemoryStream(new byte[100])), "HostOnly");
+        await Throws(() => editor.StartGameAsync(), "HostOnly");
+        Check(server.WorldManifest is null && server.Epoch == -1 && !server.GameRunning, "non-host editors cannot publish or start");
+    }
+    finally { foreach (var client in clients) await client.DisposeAsync(); }
+});
+
+await Test("host leaving an empty lobby clears the role without promoting waiting peers", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-empty")));
+    await server.StartAsync();
+    await using var host = new DedicatedClient(); await using var waiting = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("Host"));
+    await waiting.ConnectAsync("127.0.0.1", server.Port, Hello("Waiting"));
+    await host.ClaimHostAsync();
+    await host.DisconnectAsync();
+    Check(!host.IsHost && !host.IsCheckpointOwner && !host.CanEdit && host.Players.Count == 0, "disconnect clears all local role flags");
+    await Until(() => waiting.Players.Count == 1);
+    Check(!waiting.IsHost && waiting.Players.All(p => !p.IsHost), "a lobby vacancy stays vacant");
+    await waiting.ClaimHostAsync();
+    Check(waiting.IsHost, "a waiting peer may explicitly claim the vacancy");
+});
+
+await Test("active session claim preserves the world and transfers host to surviving checkpoint owner", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-active"), EveryoneCanEdit: false));
+    await server.StartAsync();
+    await using var original = new DedicatedClient();
+    await original.ConnectAsync("127.0.0.1", server.Port, Hello("Original"));
+    await original.ClaimHostAsync();
+    await original.SetTimeSpeedAsync(0);
+    var world = new byte[1024];
+    await original.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await original.StartGameAsync();
+    await original.SendCommandAsync("draft", [1]);
+    await Until(() => server.HistoryCount == 1);
+    var epoch = server.Epoch; var manifest = server.WorldManifest; var seed = server.Session!.Seed;
+    await original.DisconnectAsync();
+    await server.StopAsync();
+    await server.StartAsync();
+    await using var checkpointOwner = new DedicatedClient(); await using var host = new DedicatedClient();
+    await checkpointOwner.ConnectAsync("127.0.0.1", server.Port, Hello("Checkpoint owner"));
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("New host"));
+    Check(!checkpointOwner.IsHost && !host.IsHost, "joining a persisted running world still does not claim host");
+    await host.ClaimHostAsync();
+    await Until(() => !checkpointOwner.CanEdit);
+    Check(host.IsHost && host.CanEdit && !host.IsCheckpointOwner && checkpointOwner.IsCheckpointOwner && !checkpointOwner.CanEdit &&
+        host.Players.Count(p => p.CanEdit) == 1, "an active claim preserves checkpoint duty while transferring unique editing authority");
+    Check(server.Epoch == epoch && server.WorldManifest?.Id == manifest?.Id && server.Session!.Seed == seed &&
+        server.Tick == 0 && server.HistoryCount == 1 && server.CurrentPolicy.TimeSpeed == 0, "claim never replaces/restarts the active world");
+    var checkpoint = Enumerable.Repeat((byte)7, 1024).ToArray();
+    await checkpointOwner.CheckpointWorldAsync(SnapshotBuilder.Describe(checkpoint), new MemoryStream(checkpoint), 0);
+    Check(!checkpointOwner.IsHost && !checkpointOwner.CanEdit && server.WorldManifest?.Id == SnapshotBuilder.Describe(checkpoint).Id,
+        "a non-host checkpoint owner without editing permission can still publish checkpoints");
+    await host.DisconnectAsync();
+    await Until(() => checkpointOwner.IsHost && checkpointOwner.Players.Count == 1);
+    Check(checkpointOwner.IsCheckpointOwner && checkpointOwner.CanEdit && checkpointOwner.Players.Single().IsHost,
+        "running host ownership deterministically transfers to the surviving checkpoint owner");
+});
+
+await Test("an in-flight host claim never hops connections or leaves host state in the next room", async () =>
+{
+    await using var room = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-switch")));
+    await room.StartAsync();
+    var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+    listener.Start();
+    using var stop = new CancellationTokenSource();
+    var requestSeen = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var fake = Task.Run(async () =>
+    {
+        using var socket = await listener.AcceptTcpClientAsync();
+        await ReadPacket(socket);
+        await WritePacket(socket, new
+        {
+            type = "Welcome", protocolVersion = NetworkProtocol.Version, clientVersion = NetworkProtocol.ClientVersion,
+            gameVersion = "1.7.4998", modHash = "mod-a", canEdit = true, isHost = false,
+            policy = new SpeedPolicy(), playerId = 1L, epoch = -1L,
+            players = new[] { new PlayerInfo(1, "Old room", 0, true, false) }
+        });
+        var claim = await ReadPacket(socket);
+        Check(claim.GetProperty("type").GetString() == "ClaimHost", "the request reaches its original connection");
+        requestSeen.TrySetResult();
+        try { await Task.Delay(Timeout.Infinite, stop.Token); } catch (OperationCanceledException) { }
+    });
+    await using var changing = new DedicatedClient();
+    try
+    {
+        await changing.ConnectAsync("127.0.0.1", ((System.Net.IPEndPoint)listener.LocalEndpoint).Port, Hello());
+        var claim = changing.ClaimHostAsync();
+        await requestSeen.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await changing.ConnectAsync("127.0.0.1", room.Port, Hello());
+        await Throws(() => claim);
+        Check(!changing.IsHost && changing.Players.All(p => !p.IsHost), "the new connection remains an ordinary join");
+        await changing.ClaimHostAsync();
+        Check(changing.IsHost, "only a new explicit request may claim the new room");
+    }
+    finally { stop.Cancel(); listener.Stop(); await fake; }
+});
+
+await Test("unauthorized and retyped commits never replace the authoritative world", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-commit")));
+    await server.StartAsync();
+    using var raw = new TcpClient(); await raw.ConnectAsync("127.0.0.1", server.Port);
+    await WritePacket(raw, new { type = "Hello", protocolVersion = NetworkProtocol.Version, hello = Hello("Editor") });
+    await ReadPacket(raw);
+    await using var host = new DedicatedClient();
+    await host.ConnectAsync("127.0.0.1", server.Port, Hello("Host"));
+    await host.ClaimHostAsync(); await host.SetTimeSpeedAsync(0);
+    var world = new byte[1024]; var manifest = SnapshotBuilder.Describe(world);
+    await host.UploadWorldAsync(manifest, new MemoryStream(world)); await host.StartGameAsync();
+    var chunk = Enumerable.Repeat((byte)123, 100).ToArray();
+    var changed = SnapshotBuilder.Describe(chunk);
+    foreach (var checkpoint in new[] { false, true })
+    {
+        var requestId = checkpoint ? 702 : 701;
+        await WritePacket(raw, new
+        {
+            type = "PublishWorldChunk", protocolVersion = NetworkProtocol.Version, requestId,
+            uploadId = "editor-upload", chunkIndex = 0, worldChunk = chunk, checkpoint, epoch = server.Epoch, tick = 0
+        });
+        var response = await ReadReply(raw, requestId);
+        Check(response.GetProperty("code").GetString() == (checkpoint ? "NotCheckpointOwner" : "HostOnly"),
+            "editing permission is insufficient for either upload purpose");
+    }
+    await WritePacket(raw, new
+    {
+        type = "CommitWorld", protocolVersion = NetworkProtocol.Version, requestId = 703,
+        uploadId = "editor-upload", checkpoint = true, epoch = server.Epoch, tick = 0, chunkCount = 1, sha256 = changed.Id
+    });
+    Check((await ReadReply(raw, 703)).GetProperty("code").GetString() == "NotCheckpointOwner", "direct commit checks owner before processing data");
+    Check(server.WorldManifest?.Id == manifest.Id && server.CheckpointManifest?.Id == manifest.Id, "failed checkpoint commit preserves both world pointers");
+    await host.DisconnectAsync();
+    // Running-room continuity explicitly promotes this remaining raw peer; wait for its role update.
+    var promoted = false;
+    for (var index = 0; index < 32 && !promoted; index++)
+    {
+        var packet = await ReadPacket(raw);
+        promoted = packet.GetProperty("type").GetString() == "Role" && packet.GetProperty("isHost").GetBoolean();
+    }
+    Check(promoted, "running room transfers host to survivor");
+    await WritePacket(raw, new
+    {
+        type = "PublishWorldChunk", protocolVersion = NetworkProtocol.Version, requestId = 704,
+        uploadId = "bound-purpose", chunkIndex = 0, worldChunk = chunk, checkpoint = true, epoch = server.Epoch, tick = 0
+    });
+    Check((await ReadReply(raw, 704)).GetProperty("type").GetString() == "WorldChunkAccepted", "checkpoint owner may stage a checkpoint");
+    await WritePacket(raw, new
+    {
+        type = "CommitWorld", protocolVersion = NetworkProtocol.Version, requestId = 705,
+        uploadId = "bound-purpose", checkpoint = false, epoch = server.Epoch, tick = 0, chunkCount = 1, sha256 = changed.Id
+    });
+    Check((await ReadReply(raw, 705)).GetProperty("code").GetString() == "InvalidUpload", "an upload cannot switch from checkpoint to initial publication");
+    Check(server.WorldManifest?.Id == manifest.Id && server.CheckpointManifest?.Id == manifest.Id && server.Epoch == 0,
+        "retyped commit preserves the running authoritative world");
+});
+
+await Test("delayed host role and roster notifications cannot poison another room", async () =>
+{
+    await using var first = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-events-a")));
+    await using var second = new DedicatedServer(new(Port: 0, DataDirectory: Dir("host-events-b")));
+    await first.StartAsync(); await second.StartAsync();
+    await using var changing = new DedicatedClient();
+    await changing.ConnectAsync("127.0.0.1", first.Port, Hello());
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var notifications = new System.Collections.Concurrent.ConcurrentQueue<bool>();
+    var firstEvent = 0;
+    changing.PlayersChanged += players =>
+    {
+        if (Interlocked.Increment(ref firstEvent) == 1)
+        {
+            entered.TrySetResult();
+            release.Task.Wait(TimeSpan.FromSeconds(5));
+        }
+        else notifications.Enqueue(players.Any(p => p.IsHost));
+    };
+    try
+    {
+        await changing.ClaimHostAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Check(changing.IsHost, "old room role is confirmed while its UI dispatcher is blocked");
+        await changing.ConnectAsync("127.0.0.1", second.Port, Hello());
+    }
+    finally { release.TrySetResult(); }
+    await Until(() => notifications.Count > 0);
+    Check(!changing.IsHost && notifications.All(host => !host) && changing.Players.All(p => !p.IsHost),
+        "queued old-room host notifications are discarded by connection generation");
+});
+
+await Test("presence roster: Welcome identity, join, leave, ownership and stable reconnect color", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("presence-roster"), EveryoneCanEdit: false));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("Alice"));
+    Check(a.PlayerId > 0 && a.Players.Count == 1 && a.Players[0].Id == a.PlayerId &&
+        a.Players[0].Name == "Alice" && a.Players[0].IsCheckpointOwner, "Welcome atomically supplies assigned identity and roster");
+    var firstId = a.PlayerId;
+    var color = a.Players[0].ColorIndex;
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("Bob"));
+    await Until(() => a.Players.Count == 2 && b.Players.Count == 2);
+    Check(b.PlayerId != firstId && b.Players.SequenceEqual(a.Players), "same server-assigned roster on both peers");
+    Check(!b.Players.Single(p => p.Id == b.PlayerId).CanEdit, "read-only role appears in roster");
+    await a.DisconnectAsync();
+    Check(a.PlayerId == 0 && a.Players.Count == 0 && a.Presences.Count == 0, "disconnect clears all transient identity/state immediately");
+    await Until(() => b.Players.Count == 1 && b.Players[0].IsCheckpointOwner && b.Players[0].CanEdit && b.CanEdit);
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("Alice"));
+    Check(a.PlayerId != firstId && a.Players.Single(p => p.Id == a.PlayerId).ColorIndex == color,
+        "new socket identity with stable named-player color");
+    await Until(() => b.Players.Count == 2);
+});
+
+await Test("presence: real map coordinates, names, hidden/off-map state and disconnect removal", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("presence-coordinates")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("Map owner"));
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("Map visitor"));
+    await Until(() => a.Players.Count == 2);
+    var position = new PresenceUpdate(-1, 47, 123.25f, 86.875f, true, PlayerActivity.Playing);
+    Check(await a.SendPresenceAsync(position), "first sample sent");
+    await Until(() => b.Presences.Count == 1);
+    var received = b.Presences[0];
+    Check(received.PlayerId == a.PlayerId && received.State == position && received.UpdatedAtMilliseconds > 0,
+        "coordinates and map unique ID survive TCP relay with server identity and local timestamp");
+    Check(b.Players.Single(p => p.Id == received.PlayerId).Name == "Map owner", "pointer resolves the actual player name");
+    Check(a.Presences.Count == 0, "sender does not receive its own pointer echo");
+    await Task.Delay(110);
+    var hidden = position with { Visible = false, X = 0, Z = 0 };
+    Check(await a.SendPresenceAsync(hidden), "explicit hide sent");
+    await Until(() => b.Presences[0].State == hidden);
+    await Task.Delay(110);
+    var away = hidden with { MapId = -1 };
+    Check(await a.SendPresenceAsync(away), "off-map sample sent");
+    await Until(() => b.Presences[0].State.MapId == -1);
+    await a.DisconnectAsync();
+    await Until(() => b.Players.Count == 1 && b.Presences.Count == 0);
+    Check(server.HistoryCount == 0 && server.Tick == 0 && !server.GameRunning,
+        "presence never starts simulation or touches command history");
+});
+
+await Test("presence: one-in-flight client rate cap, finite validation and epoch isolation", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("presence-client-limits")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient(); await using var b = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello());
+    await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
+    await Until(() => a.Players.Count == 2);
+    var position = new PresenceUpdate(-1, 3, 50, 60, true, PlayerActivity.Playing);
+    var sends = await Task.WhenAll(Enumerable.Range(0, 100).Select(i => a.SendPresenceAsync(position with { X = i })));
+    Check(sends.Count(sent => sent) == 1, "100 simultaneous samples create one wire write");
+    await Until(() => b.Presences.Count == 1);
+    await Throws(() => a.SendPresenceAsync(position with { X = float.NaN }));
+    await Throws(() => a.SendPresenceAsync(position with { MapId = -1 }));
+    await Throws(() => a.SendPresenceAsync(position with { Activity = (PlayerActivity)999 }));
+    await a.SetTimeSpeedAsync(0);
+    var world = new byte[1024];
+    await a.ClaimHostAsync();
+    await a.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await a.StartGameAsync();
+    await Until(() => a.PresenceEpoch == server.Epoch && b.PresenceEpoch == server.Epoch && b.Presences.Count == 0);
+    Check(!await a.SendPresenceAsync(position), "a delayed sample from the previous epoch is discarded locally");
+    await Task.Delay(110);
+    var current = position with { Epoch = server.Epoch, MapId = 99 };
+    Check(await a.SendPresenceAsync(current), "new epoch sample is sent");
+    await Until(() => b.Presences.Count == 1 && b.Presences[0].State == current);
+    Check(server.Tick == 0 && server.HistoryCount == 0 && server.CurrentPolicy.TimeSpeed == 0,
+        "presence while paused changes no simulation tick, native speed or command history");
+    await a.StartGameAsync();
+    await Until(() => b.PresenceEpoch == server.Epoch && b.Presences.Count == 0);
+});
+
+await Test("presence relay: forged identity ignored, raw flood throttled, invalid/old epoch dropped", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("presence-raw")));
+    await server.StartAsync();
+    await using var a = new DedicatedClient();
+    await a.ConnectAsync("127.0.0.1", server.Port, Hello("Observer"));
+    await a.SetTimeSpeedAsync(0);
+    var world = new byte[1024];
+    await a.ClaimHostAsync();
+    await a.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
+    await a.StartGameAsync();
+    await Until(() => a.PresenceEpoch == server.Epoch);
+    using var raw = new TcpClient();
+    await raw.ConnectAsync("127.0.0.1", server.Port);
+    await WritePacket(raw, new { type = "Hello", protocolVersion = NetworkProtocol.Version, hello = Hello("Raw peer") });
+    var welcome = await ReadPacket(raw);
+    Check(welcome.GetProperty("type").GetString() == "Welcome", "Welcome precedes every roster and presence broadcast");
+    var rawId = welcome.GetProperty("playerId").GetInt64();
+    await Until(() => a.Players.Count == 2);
+    var receivedCount = 0;
+    a.PresenceChanged += _ => Interlocked.Increment(ref receivedCount);
+    var state = new PresenceUpdate(server.Epoch, 42, 10.5f, 20.25f, true, PlayerActivity.Playing);
+    var startedAt = Environment.TickCount64;
+    for (var index = 0; index < 100; index++)
+        await WritePacket(raw, new
+        {
+            type = "Presence", protocolVersion = NetworkProtocol.Version, playerId = a.PlayerId,
+            presence = state with { X = index }, playerPresence = new PlayerPresence(a.PlayerId, state)
+        });
+    await RawBarrier(raw, 991);
+    await Until(() => a.Presences.Any(p => p.PlayerId == rawId));
+    Check(a.Presences.Count == 1 && a.Presences[0].PlayerId != a.PlayerId, "server binds identity to socket despite forged envelope fields");
+    var budget = 1 + (Environment.TickCount64 - startedAt) / PresenceRules.SendIntervalMilliseconds;
+    Check(Volatile.Read(ref receivedCount) <= budget, "raw traffic also obeys server wall-clock budget");
+    var previous = a.Presences[0];
+    await Task.Delay(110);
+    await WritePacket(raw, new { type = "Presence", protocolVersion = NetworkProtocol.Version, presence = state with { X = -1 } });
+    await WritePacket(raw, new { type = "Presence", protocolVersion = NetworkProtocol.Version, presence = state with { Epoch = server.Epoch - 1, MapId = 98 } });
+    await RawBarrier(raw, 992);
+    Check(a.Presences[0] == previous, "invalid coordinates and previous epoch never reach peers");
+    await WritePacket(raw, new { type = "Presence", protocolVersion = NetworkProtocol.Version, presence = state with { Visible = false, X = 0, Z = 0 } });
+    await RawBarrier(raw, 993);
+    await Until(() => !a.Presences[0].State.Visible);
+    await a.SetTimeSpeedAsync(0);
+    Check(a.IsConnected && server.HistoryCount == 0 && server.Tick == 0,
+        "advisory flood does not append commands, advance the paused timeline or disconnect healthy peers");
+    raw.Dispose();
+    await Until(() => a.Players.Count == 1 && a.Presences.Count == 0);
+});
+
+await Test("presence heartbeat reports measured RTT rather than invented latency", async () =>
+{
+    await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("presence-latency")));
+    await server.StartAsync();
+    await using var client = new DedicatedClient();
+    await client.ConnectAsync("127.0.0.1", server.Port, Hello());
+    Check(client.LatencyMilliseconds == -1, "unmeasured latency starts unknown");
+    await Until(() => client.LatencyMilliseconds >= 0 && client.Players.Count == 1 && client.Players[0].LatencyMilliseconds >= 0, 8);
+    Check(client.LatencyMilliseconds < 5000 && client.Players[0].LatencyMilliseconds < 5000, "loopback round trip is measured by both endpoints");
 });
 
 await Test("concurrent writes are serialized; broadcasts never go backwards", async () =>
@@ -347,6 +774,7 @@ await Test("shared colony: controller publishes world, starts, and both clients 
     Check(controller.CanEdit && guest.CanEdit, "both peers may edit in the default room");
     var world = new byte[300_000]; new Random(3).NextBytes(world);
     var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
+    await controller.ClaimHostAsync();
     await controller.UploadWorldAsync(manifest, new MemoryStream(world));
     Check(server.WorldManifest?.Id == manifest.Id, "server stores the shared world");
     Check((await guest.GetWorldManifestAsync())?.Id == manifest.Id, "guests see the same world id");
@@ -366,7 +794,7 @@ await Test("shared colony: controller publishes world, starts, and both clients 
     Check(server.Tick >= 0 && server.GameRunning, "server drives a shared tick clock");
 });
 
-await Test("controller-only room rejects world publishing by a guest", async () =>
+await Test("controller-only room requires explicit host to publish its world", async () =>
 {
     await using var server = new DedicatedServer(new(Port: 0, DataDirectory: Dir("shared-owner"), EveryoneCanEdit: false));
     await server.StartAsync();
@@ -374,10 +802,11 @@ await Test("controller-only room rejects world publishing by a guest", async () 
     await using var guest = new DedicatedClient();
     await controller.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
-    Check(controller.CanEdit && !guest.CanEdit, "only the assigned controller may publish");
+    Check(controller.CanEdit && !guest.CanEdit && !controller.IsHost && !guest.IsHost, "editing is separate from hosting");
     var world = new byte[2048]; new Random(5).NextBytes(world);
     var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
-    await Throws(() => guest.UploadWorldAsync(manifest, new MemoryStream(world)), "ControllerOnly");
+    await Throws(() => guest.UploadWorldAsync(manifest, new MemoryStream(world)), "HostOnly");
+    await controller.ClaimHostAsync();
     await controller.UploadWorldAsync(manifest, new MemoryStream(world));
     Check(server.WorldManifest?.Id == manifest.Id, "controller publishes the shared world");
 });
@@ -429,6 +858,7 @@ await Test("server reports a desync when two peers disagree on the same tick", a
     await a.ConnectAsync("127.0.0.1", server.Port, Hello());
     await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
     var world = new byte[4096]; new Random(9).NextBytes(world);
+    await a.ClaimHostAsync();
     await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await a.StartGameAsync();
     var desync = new TaskCompletionSource<int>();
@@ -450,6 +880,7 @@ await Test("a peer joining mid-session receives the epoch, tick and full command
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
     AutoCheckpoint(host, server);
     var world = new byte[8192]; new Random(11).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
@@ -476,6 +907,7 @@ await Test("session seed reaches every peer and survives a server restart with i
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
     AutoCheckpoint(host, server);
     var world = new byte[4096]; new Random(13).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     await Until(() => seeds.Count == 1);
@@ -551,6 +983,7 @@ await Test("after a desync the controller can restart the colony with a fresh ep
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
     var world = new byte[4096]; new Random(21).NextBytes(world);
     var manifest = TurboTick.Networking.SnapshotBuilder.Describe(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(manifest, new MemoryStream(world));
     var epochs = new List<long>();
     guest.WorldStarted += (session, _) => { lock (epochs) epochs.Add(session.Epoch); };
@@ -574,6 +1007,7 @@ await Test("a checkpoint trims history so a late join replays only the delta", a
     AutoCheckpoint(host, server);
     Check(host.IsCheckpointOwner, "first peer owns checkpoints");
     var world = new byte[4096]; new Random(31).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     for (var i = 0; i < 3; i++)
@@ -610,6 +1044,7 @@ await Test("server rejects unknown command kinds and throttles a flooding client
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
     AutoCheckpoint(host, server);
     var world = new byte[2048]; new Random(41).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     await host.SendCommandAsync("invented", "x"u8.ToArray());
@@ -637,6 +1072,7 @@ await Test("desync detail names the category that diverged", async () =>
     await a.ConnectAsync("127.0.0.1", server.Port, Hello());
     await b.ConnectAsync("127.0.0.1", server.Port, Hello("B"));
     var world = new byte[2048]; new Random(51).NextBytes(world);
+    await a.ClaimHostAsync();
     await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await a.StartGameAsync();
     var detail = new TaskCompletionSource<string>();
@@ -659,6 +1095,7 @@ await Test("a dropped peer reconnects to the checkpoint, replays the delta and c
     AutoCheckpoint(host, server);
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
     var world = new byte[4096]; new Random(61).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     await host.SendCommandAsync("designation", "Mine|0|1|1"u8.ToArray());
@@ -698,6 +1135,7 @@ await Test("five peers submitting concurrently yield one total order with no los
             await client.ConnectAsync("127.0.0.1", server.Port, Hello("p" + i));
         }
         var world = new byte[8192]; new Random(71).NextBytes(world);
+        await clients[0].ClaimHostAsync();
         await clients[0].UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
         var received = new List<GameCommand>();
         clients[1].CommandsReceived += commands => { lock (received) received.AddRange(commands); };
@@ -737,6 +1175,7 @@ await Test("comparison hashes stay inside a bounded window during a long session
     await using var a = new DedicatedClient();
     await a.ConnectAsync("127.0.0.1", server.Port, Hello());
     var world = new byte[2048]; new Random(81).NextBytes(world);
+    await a.ClaimHostAsync();
     await a.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await a.StartGameAsync();
     for (var tick = 60; tick <= 6000; tick += 60) await a.ReportHashAsync(tick, new string('a', 64));
@@ -784,6 +1223,7 @@ await Test("an overflowed history tells the joining peer it cannot catch up inst
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
     AutoCheckpoint(host, server);
     var world = new byte[2048]; new Random(91).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     for (var i = 0; i < 5; i++) await host.SendCommandAsync("designation", System.Text.Encoding.UTF8.GetBytes($"Mine|0|{i}|{i}"));
@@ -811,6 +1251,7 @@ await Test("command batches carry their epoch and the checkpoint owner passes to
     await second.ConnectAsync("127.0.0.1", server.Port, Hello("second"));
     Check(first.IsCheckpointOwner && !second.IsCheckpointOwner, "first peer owns checkpoints");
     var world = new byte[2048]; new Random(101).NextBytes(world);
+    await first.ClaimHostAsync();
     await first.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     var epochs = new List<long>();
     second.WorldStarted += (session, _) => { lock (epochs) epochs.Add(session.Epoch); };
@@ -936,6 +1377,7 @@ await Test("transport command round-trips and the server accepts the kind", asyn
     AutoCheckpoint(host, server);
     await guest.ConnectAsync("127.0.0.1", server.Port, Hello("guest"));
     var world = new byte[2048]; new Random(111).NextBytes(world);
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(TurboTick.Networking.SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     var received = new TaskCompletionSource<GameCommand>();
@@ -1041,6 +1483,7 @@ await Test("native clock: native rates, pause without debt, and running server h
     await using var host = new DedicatedClient();
     await host.ConnectAsync("127.0.0.1", server.Port, Hello("host"));
     byte[] world = [1, 2, 3];
+    await host.ClaimHostAsync();
     await host.UploadWorldAsync(SnapshotBuilder.Describe(world), new MemoryStream(world));
     await host.StartGameAsync();
     await Until(() => server.Tick >= 6);

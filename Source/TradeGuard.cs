@@ -19,7 +19,7 @@ internal static class TradeGuardPatch
         var settings = TurboTickMod.Settings;
         if (InteractionPolicy.CanRunColonyWideAction(
                 sharedPlaying: true,
-                isOwner: RoomConnection.IsCheckpointOwner,
+                isOwner: RoomConnection.IsHost,
                 allowEveryone: settings is { everyoneMayTrade: true }))
             return true;
         __result = false;

@@ -47,7 +47,10 @@ public static class Diagnostics
         text.AppendLine($"会话 {session.Phase} epoch={session.Epoch} 服务器tick={session.Barrier.ServerTick} 本地tick={session.Barrier.AppliedTick} 待执行={session.Commands.Count}");
         text.AppendLine($"TPS 实测 {TurboState.MeasuredTps:0} / 目标 {TurboState.TargetTps:0}{(TurboState.Behind ? "（偏低）" : "")}");
         if (TurboState.Authority.SessionConnected)
+        {
+            text.AppendLine("专用服务器 " + RoomConnection.Endpoint + " · 房主 " + (RoomConnection.IsHost ? "是" : "否"));
             text.AppendLine("检查点所有者 " + (RoomConnection.IsCheckpointOwner ? "是" : "否"));
+        }
         if (session.Phase == SharedPhase.Faulted) text.AppendLine("错误 " + session.LastError);
         return text.ToString().TrimEnd();
     }

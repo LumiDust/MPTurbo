@@ -2,6 +2,7 @@
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import os
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 ABOUT = ROOT / "About"
@@ -46,7 +47,8 @@ draw.text((38, 88), "TurboTick", font=font(54, True), fill=(242, 248, 252))
 draw.text((41, 163), "Dedicated multiplayer project", font=font(20), fill=(160, 188, 207))
 draw.text((41, 212), "ROOMS  /  SPEED SYNC  /  SNAPSHOT CACHE", font=font(13, True), fill=(96, 218, 196))
 draw.line((40, 272, 600, 272), fill=(48, 82, 100), width=1)
-draw.text((41, 294), "RELEASE 0.4.0", font=font(16, True), fill=(237, 193, 113))
+version = ET.parse(ROOT / "Directory.Build.props").findtext("./PropertyGroup/Version")
+draw.text((41, 294), f"RELEASE {version}", font=font(16, True), fill=(237, 193, 113))
 try:
     zh_font = ImageFont.truetype(str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "msyh.ttc"), 13)
 except Exception:

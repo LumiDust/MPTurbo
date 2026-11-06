@@ -194,7 +194,8 @@ try
             await WriteFrame(socket.GetStream(), JsonSerializer.Serialize(new
             {
                 type = "Welcome", protocolVersion = NetworkProtocol.Version, clientVersion = NetworkProtocol.ClientVersion,
-                gameVersion = "1.7.4910", modHash = "test-hash", canEdit = true, policy = new SpeedPolicy()
+                gameVersion = "1.7.4910", modHash = "test-hash", canEdit = true, isHost = false, policy = new SpeedPolicy(),
+                playerId = 1L, epoch = -1L, players = new[] { new PlayerInfo(1, "Test", 0, true, true) }
             }));
             await ReadFrame(socket.GetStream());
             requestSeen.TrySetResult();
@@ -236,7 +237,8 @@ try
             await WriteFrame(socket.GetStream(), JsonSerializer.Serialize(new
             {
                 type = "Welcome", protocolVersion = NetworkProtocol.Version, clientVersion = NetworkProtocol.ClientVersion,
-                gameVersion = "1.7.4910", modHash = "test-hash", canEdit = true, policy = new SpeedPolicy()
+                gameVersion = "1.7.4910", modHash = "test-hash", canEdit = true, isHost = false, policy = new SpeedPolicy(),
+                playerId = 1L, epoch = -1L, players = new[] { new PlayerInfo(1, "Test", 0, true, true) }
             }));
             await ReadFrame(socket.GetStream());
             requestSeen.TrySetResult();

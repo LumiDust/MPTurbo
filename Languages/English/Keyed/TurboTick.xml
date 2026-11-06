@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LanguageData>
-  <TurboTick_Prototype>Independent multiplayer protocol prototype: dedicated connection, speed settings sync and snapshot cache. Shared-colony, pawn and building command replication are still in development.</TurboTick_Prototype>
+  <TurboTick_Prototype>Hosting and joining both connect to a dedicated server first. Once the server grants the host role, select or create a colony and publish it for everyone.</TurboTick_Prototype>
   <TurboTick_Host>Server address</TurboTick_Host>
   <TurboTick_Port>TCP port</TurboTick_Port>
   <TurboTick_Player>Player name</TurboTick_Player>
@@ -12,12 +12,12 @@
   <TurboTick_MaxRateCap>Total rate cap: {0}x</TurboTick_MaxRateCap>
   <TurboTick_ApplyRoom>Submit to server / synchronize room</TurboTick_ApplyRoom>
   <TurboTick_ApplyLocal>Apply locally</TurboTick_ApplyLocal>
-  <TurboTick_ShowHud>Show diagnostics HUD</TurboTick_ShowHud>
-  <TurboTick_ShowHudDesc>Actual completed TPS, target TPS, connection holds and server policy revision.</TurboTick_ShowHudDesc>
+  <TurboTick_ShowHud>Show multiplayer player panel</TurboTick_ShowHud>
+  <TurboTick_ShowHudDesc>Players, latency, synchronization status and TPS. Click the header to collapse the list.</TurboTick_ShowHudDesc>
   <TurboTick_CacheSnapshot>Download / resume server snapshot cache</TurboTick_CacheSnapshot>
   <TurboTick_HudTps>Actual {0} TPS / target {1} TPS</TurboTick_HudTps>
   <TurboTick_Held>Connection pending / lost: simulation held. Reconnect or leave the room in settings.</TurboTick_Held>
-  <TurboTick_RoomPrototype>Room speed settings connected; shared-colony replication in development.</TurboTick_RoomPrototype>
+  <TurboTick_RoomPrototype>Connected to the room. Waiting for the host to share a colony.</TurboTick_RoomPrototype>
   <TurboTick_Local>Not in a room / local mode</TurboTick_Local>
   <TurboTick_LowTps>Below target TPS. Adjust the speed through the user or server.</TurboTick_LowTps>
   <TurboTick_Disable>Disable extra speed</TurboTick_Disable>
@@ -41,4 +41,78 @@
   <TurboTick_NativeFast>Fast</TurboTick_NativeFast>
   <TurboTick_NativeSuperfast>Superfast</TurboTick_NativeSuperfast>
   <TurboTick_NativeUltrafast>Developer ultrafast</TurboTick_NativeUltrafast>
+  <TurboTick_Multiplayer>Multiplayer</TurboTick_Multiplayer>
+  <TurboTick_OpenLobby>Open multiplayer lobby</TurboTick_OpenLobby>
+  <TurboTick_LobbySubtitle>Build one colony together. Join your friends' world at any time.</TurboTick_LobbySubtitle>
+  <TurboTick_LobbyFooter>TurboTick · RimWorld 1.7 · Native time controls synchronize for everyone</TurboTick_LobbyFooter>
+  <TurboTick_HostTab>Host game</TurboTick_HostTab>
+  <TurboTick_JoinTab>Join game</TurboTick_JoinTab>
+  <TurboTick_WorldSource>2. Choose your colony</TurboTick_WorldSource>
+  <TurboTick_CurrentColony>Use current colony</TurboTick_CurrentColony>
+  <TurboTick_CurrentColonyDesc>Share the colony you are playing with friends.</TurboTick_CurrentColonyDesc>
+  <TurboTick_NewColony>New colony</TurboTick_NewColony>
+  <TurboTick_NewColonyDesc>Choose a scenario, world and colonists, then publish to the dedicated server.</TurboTick_NewColonyDesc>
+  <TurboTick_ExistingSaves>Saved colonies</TurboTick_ExistingSaves>
+  <TurboTick_Refresh>Refresh</TurboTick_Refresh>
+  <TurboTick_SearchSaves>Type a save name to filter</TurboTick_SearchSaves>
+  <TurboTick_NoSaves>No matching saves. You can create a new colony.</TurboTick_NoSaves>
+  <TurboTick_RoomSettings>Room settings</TurboTick_RoomSettings>
+  <TurboTick_HostConnectStep>1. Connect to dedicated server</TurboTick_HostConnectStep>
+  <TurboTick_ConnectAsHost>Connect and request host role</TurboTick_ConnectAsHost>
+  <TurboTick_HostGuideTitle>Connect, then host</TurboTick_HostGuideTitle>
+  <TurboTick_HostGuide>1. Enter the running dedicated server's address, port and your player name.\n\n2. Connect and obtain the host role, then select a save or create a colony.\n\n3. Publish the loaded/generated colony to that same server.\n\nOther players join this server. It runs independently of the host's computer.</TurboTick_HostGuide>
+  <TurboTick_DedicatedConnected>Server connected · Host</TurboTick_DedicatedConnected>
+  <TurboTick_HostSaveGuide>The dedicated server has granted you the host role.\n\nSelect a save or create a colony, then publish it to this server for everyone to load.</TurboTick_HostSaveGuide>
+  <TurboTick_HostConnectFirst>Use Host game to connect to the dedicated server and obtain the host role first.</TurboTick_HostConnectFirst>
+  <TurboTick_HostConnectionLost>The connection or host role changed. Save publication has stopped; reconnect to the server.</TurboTick_HostConnectionLost>
+  <TurboTick_HostRoleReady>The server confirmed your host role. Select a save or create a colony.</TurboTick_HostRoleReady>
+  <TurboTick_HostOccupied>This server already has a host. Use Join game to enter.</TurboTick_HostOccupied>
+  <TurboTick_ConnectionFailed>Dedicated server connection did not complete: {0}</TurboTick_ConnectionFailed>
+  <TurboTick_ServerWorldContinues>The server already has a shared colony. Continuing its saved world.</TurboTick_ServerWorldContinues>
+  <TurboTick_DedicatedRoomAddress>Dedicated server: {0}</TurboTick_DedicatedRoomAddress>
+  <TurboTick_CreateAndHost>Create and host</TurboTick_CreateAndHost>
+  <TurboTick_StartHosting>Start hosting</TurboTick_StartHosting>
+  <TurboTick_DirectConnect>Direct connection</TurboTick_DirectConnect>
+  <TurboTick_JoinGame>Join multiplayer game</TurboTick_JoinGame>
+  <TurboTick_JoinGuideTitle>Land together</TurboTick_JoinGuideTitle>
+  <TurboTick_JoinGuide>1. Get the dedicated server's address and port from the host.\n\n2. Use the same game version, mods and configuration.\n\n3. Join to download the save and catch up automatically.\n\nColored pointers and names show other players on the same map. Use the native pause and speed buttons.</TurboTick_JoinGuide>
+  <TurboTick_PreparingRoom>Preparing your room</TurboTick_PreparingRoom>
+  <TurboTick_RoomTitle>Multiplayer room</TurboTick_RoomTitle>
+  <TurboTick_CopyPort>Copy address and port</TurboTick_CopyPort>
+  <TurboTick_BackToGame>Back to game</TurboTick_BackToGame>
+  <TurboTick_WaitForHost>Connected. Waiting for the host to share a colony; the save will load automatically.</TurboTick_WaitForHost>
+  <TurboTick_InvalidPort>Enter a port between 1 and 65535.</TurboTick_InvalidPort>
+  <TurboTick_InvalidName>Enter a player name with 1 to 32 printable characters.</TurboTick_InvalidName>
+  <TurboTick_InvalidHost>Enter a server address.</TurboTick_InvalidHost>
+  <TurboTick_ChooseSave>Select a saved colony or create a new one.</TurboTick_ChooseSave>
+  <TurboTick_HostCreating>Complete the native new-colony setup to host automatically.</TurboTick_HostCreating>
+  <TurboTick_HostLoading>Loading the selected colony, then hosting automatically.</TurboTick_HostLoading>
+  <TurboTick_HostConnecting>Connecting to the dedicated server and requesting the host role...</TurboTick_HostConnecting>
+  <TurboTick_HostPublishing>Publishing the shared save. The game will open automatically...</TurboTick_HostPublishing>
+  <TurboTick_HostReady>Your room is ready. Friends can join now.</TurboTick_HostReady>
+  <TurboTick_HostCancelled>Hosting cancelled.</TurboTick_HostCancelled>
+  <TurboTick_HostFailed>Room setup did not complete: {0}</TurboTick_HostFailed>
+  <TurboTick_HostPatchesMissing>Required synchronization patches are not ready. Check diagnostics.</TurboTick_HostPatchesMissing>
+  <TurboTick_ShowPlayerCursors>Show other players' pointers</TurboTick_ShowPlayerCursors>
+  <TurboTick_ShowPlayerCursorsDesc>Display colored pointers and names on the same map, independently of the multiplayer panel.</TurboTick_ShowPlayerCursorsDesc>
+  <TurboTick_HudTitle>Multiplayer · {0} players</TurboTick_HudTitle>
+  <TurboTick_HudExpand>Show players</TurboTick_HudExpand>
+  <TurboTick_HudCollapse>Hide players</TurboTick_HudCollapse>
+  <TurboTick_HudLatency>{0} ms</TurboTick_HudLatency>
+  <TurboTick_HudLatencyUnknown>Measuring latency</TurboTick_HudLatencyUnknown>
+  <TurboTick_HudYou>You</TurboTick_HudYou>
+  <TurboTick_HudHost>Host</TurboTick_HudHost>
+  <TurboTick_HudController>Controller</TurboTick_HudController>
+  <TurboTick_HudReadOnly>Read-only</TurboTick_HudReadOnly>
+  <TurboTick_HudLobby>In lobby</TurboTick_HudLobby>
+  <TurboTick_HudSynced>In sync · tick {0}</TurboTick_HudSynced>
+  <TurboTick_HudSyncing>Synchronizing world</TurboTick_HudSyncing>
+  <TurboTick_HudFaulted>Sync suspended</TurboTick_HudFaulted>
+  <TurboTick_HudAway>Away from map</TurboTick_HudAway>
+  <TurboTick_HudCursorHidden>Pointer hidden</TurboTick_HudCursorHidden>
+  <TurboTick_HudOtherMap>Another map</TurboTick_HudOtherMap>
+  <TurboTick_HudStale>Waiting for presence</TurboTick_HudStale>
+  <TurboTick_HudPlayers>Players</TurboTick_HudPlayers>
+  <TurboTick_HudRoom>Room</TurboTick_HudRoom>
+  <TurboTick_HudOnMap>On map</TurboTick_HudOnMap>
 </LanguageData>

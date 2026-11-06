@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LanguageData>
-  <TurboTick_Prototype>独立联机协议原型：已接入专用服务器、倍率设置同步和快照缓存。共享殖民地、人物及建造操作同步仍在开发。</TurboTick_Prototype>
+  <TurboTick_Prototype>主持和加入都先连接专用服务器。主持者取得房主身份后选择已有存档或新建殖民地，再由专服向全员分发共享存档。</TurboTick_Prototype>
   <TurboTick_Host>服务器地址</TurboTick_Host>
   <TurboTick_Port>TCP 端口</TurboTick_Port>
   <TurboTick_Player>玩家名称</TurboTick_Player>
@@ -12,12 +12,12 @@
   <TurboTick_MaxRateCap>总速率上限：{0}x</TurboTick_MaxRateCap>
   <TurboTick_ApplyRoom>提交给服务器／全体同步</TurboTick_ApplyRoom>
   <TurboTick_ApplyLocal>应用到本地</TurboTick_ApplyLocal>
-  <TurboTick_ShowHud>显示诊断 HUD</TurboTick_ShowHud>
-  <TurboTick_ShowHudDesc>显示实际完成 TPS、目标 TPS、连接等待状态和服务端设置修订。</TurboTick_ShowHudDesc>
+  <TurboTick_ShowHud>显示联机玩家面板</TurboTick_ShowHud>
+  <TurboTick_ShowHudDesc>显示玩家列表、延迟、同步状态与 TPS。点击标题可以收起列表。</TurboTick_ShowHudDesc>
   <TurboTick_CacheSnapshot>下载／续传服务器快照到缓存</TurboTick_CacheSnapshot>
   <TurboTick_HudTps>实测 {0} TPS · 目标 {1} TPS</TurboTick_HudTps>
   <TurboTick_Held>连接等待／中断：暂缓推进。请重连或在设置中退出房间。</TurboTick_Held>
-  <TurboTick_RoomPrototype>房间倍率同步已接通；共享殖民地同步开发中。</TurboTick_RoomPrototype>
+  <TurboTick_RoomPrototype>房间已连接，等待房主开始共享殖民地。</TurboTick_RoomPrototype>
   <TurboTick_Local>未加入房间 · 本地模式</TurboTick_Local>
   <TurboTick_LowTps>实际 TPS 低于目标；由用户或服务端统一调整倍率。</TurboTick_LowTps>
   <TurboTick_Disable>关闭额外倍率</TurboTick_Disable>
@@ -41,4 +41,78 @@
   <TurboTick_NativeFast>快速</TurboTick_NativeFast>
   <TurboTick_NativeSuperfast>超快</TurboTick_NativeSuperfast>
   <TurboTick_NativeUltrafast>开发极速</TurboTick_NativeUltrafast>
+  <TurboTick_Multiplayer>多人游戏</TurboTick_Multiplayer>
+  <TurboTick_OpenLobby>打开多人游戏大厅</TurboTick_OpenLobby>
+  <TurboTick_LobbySubtitle>一起经营同一个殖民地，随时加入朋友的世界。</TurboTick_LobbySubtitle>
+  <TurboTick_LobbyFooter>TurboTick · RimWorld 1.7 · 原生时间控件全员同步</TurboTick_LobbyFooter>
+  <TurboTick_HostTab>主持游戏</TurboTick_HostTab>
+  <TurboTick_JoinTab>加入游戏</TurboTick_JoinTab>
+  <TurboTick_WorldSource>2. 选择你的殖民地</TurboTick_WorldSource>
+  <TurboTick_CurrentColony>使用当前殖民地</TurboTick_CurrentColony>
+  <TurboTick_CurrentColonyDesc>将正在游玩的存档发布给朋友。</TurboTick_CurrentColonyDesc>
+  <TurboTick_NewColony>新建殖民地</TurboTick_NewColony>
+  <TurboTick_NewColonyDesc>选择剧本、世界与殖民者，完成后发布到专服。</TurboTick_NewColonyDesc>
+  <TurboTick_ExistingSaves>已有存档</TurboTick_ExistingSaves>
+  <TurboTick_Refresh>刷新</TurboTick_Refresh>
+  <TurboTick_SearchSaves>输入存档名称筛选</TurboTick_SearchSaves>
+  <TurboTick_NoSaves>暂无匹配的存档。可以选择新建殖民地。</TurboTick_NoSaves>
+  <TurboTick_RoomSettings>房间设置</TurboTick_RoomSettings>
+  <TurboTick_HostConnectStep>1. 连接专用服务器</TurboTick_HostConnectStep>
+  <TurboTick_ConnectAsHost>连接专服并申请主持</TurboTick_ConnectAsHost>
+  <TurboTick_HostGuideTitle>先连专服，再主持</TurboTick_HostGuideTitle>
+  <TurboTick_HostGuide>1. 填写已启动的专用服务器地址、端口和玩家名。\n\n2. 连接成功并取得房主身份后，选择已有存档或新建殖民地。\n\n3. 完成读档／建图后，把殖民地发布到同一专服。\n\n其他玩家连接这个专服即可加入，专服独立于房主电脑运行。</TurboTick_HostGuide>
+  <TurboTick_DedicatedConnected>专服已连接 · 房主</TurboTick_DedicatedConnected>
+  <TurboTick_HostSaveGuide>已取得专服确认的房主身份。\n\n选择已有存档或新建殖民地，完成后会上传到当前专服，供全员载入。</TurboTick_HostSaveGuide>
+  <TurboTick_HostConnectFirst>请先通过“主持游戏”连接专用服务器并取得房主身份。</TurboTick_HostConnectFirst>
+  <TurboTick_HostConnectionLost>连接或房主身份已变化，存档发布已停止；请重新连接专服。</TurboTick_HostConnectionLost>
+  <TurboTick_HostRoleReady>专服已确认房主身份，请选择已有存档或新建殖民地。</TurboTick_HostRoleReady>
+  <TurboTick_HostOccupied>专服已有房主，请通过“加入游戏”进入。</TurboTick_HostOccupied>
+  <TurboTick_ConnectionFailed>专服连接未完成：{0}</TurboTick_ConnectionFailed>
+  <TurboTick_ServerWorldContinues>专服已有共享殖民地，正在继续服务器存档。</TurboTick_ServerWorldContinues>
+  <TurboTick_DedicatedRoomAddress>专用服务器：{0}</TurboTick_DedicatedRoomAddress>
+  <TurboTick_CreateAndHost>新建并主持</TurboTick_CreateAndHost>
+  <TurboTick_StartHosting>开始主持</TurboTick_StartHosting>
+  <TurboTick_DirectConnect>直接连接</TurboTick_DirectConnect>
+  <TurboTick_JoinGame>加入多人游戏</TurboTick_JoinGame>
+  <TurboTick_JoinGuideTitle>与朋友一起落地</TurboTick_JoinGuideTitle>
+  <TurboTick_JoinGuide>1. 向房主取得专用服务器的地址与端口。\n\n2. 使用相同的游戏版本、模组与配置。\n\n3. 连接后自动下载存档并追平进度。\n\n同一地图上会显示玩家的彩色指针与名字。暂停和速度使用原版按钮即可。</TurboTick_JoinGuide>
+  <TurboTick_PreparingRoom>正在准备你的房间</TurboTick_PreparingRoom>
+  <TurboTick_RoomTitle>多人游戏房间</TurboTick_RoomTitle>
+  <TurboTick_CopyPort>复制地址与端口</TurboTick_CopyPort>
+  <TurboTick_BackToGame>返回游戏</TurboTick_BackToGame>
+  <TurboTick_WaitForHost>已连接房间，等待房主开始共享殖民地；开始后会自动载入。</TurboTick_WaitForHost>
+  <TurboTick_InvalidPort>请输入 1 至 65535 之间的端口。</TurboTick_InvalidPort>
+  <TurboTick_InvalidName>请输入 1 至 32 个可显示字符的玩家名称。</TurboTick_InvalidName>
+  <TurboTick_InvalidHost>请输入服务器地址。</TurboTick_InvalidHost>
+  <TurboTick_ChooseSave>请选择已有存档，或选择新建殖民地。</TurboTick_ChooseSave>
+  <TurboTick_HostCreating>完成原版新建殖民地流程后，自动主持游戏。</TurboTick_HostCreating>
+  <TurboTick_HostLoading>正在载入选中的殖民地，完成后自动主持游戏。</TurboTick_HostLoading>
+  <TurboTick_HostConnecting>正在连接专用服务器并申请房主身份…</TurboTick_HostConnecting>
+  <TurboTick_HostPublishing>正在发布共享存档，完成后自动进入游戏…</TurboTick_HostPublishing>
+  <TurboTick_HostReady>房间已就绪，朋友现在可以加入。</TurboTick_HostReady>
+  <TurboTick_HostCancelled>已取消主持游戏。</TurboTick_HostCancelled>
+  <TurboTick_HostFailed>房间启动未完成：{0}</TurboTick_HostFailed>
+  <TurboTick_HostPatchesMissing>关键同步补丁尚未就绪，请查看诊断信息。</TurboTick_HostPatchesMissing>
+  <TurboTick_ShowPlayerCursors>显示其他玩家的指针</TurboTick_ShowPlayerCursors>
+  <TurboTick_ShowPlayerCursorsDesc>在同一地图上显示其他玩家的彩色指针和名字，独立于联机面板开关。</TurboTick_ShowPlayerCursorsDesc>
+  <TurboTick_HudTitle>联机 · {0} 人</TurboTick_HudTitle>
+  <TurboTick_HudExpand>展开玩家</TurboTick_HudExpand>
+  <TurboTick_HudCollapse>收起玩家</TurboTick_HudCollapse>
+  <TurboTick_HudLatency>{0} 毫秒</TurboTick_HudLatency>
+  <TurboTick_HudLatencyUnknown>测量延迟中</TurboTick_HudLatencyUnknown>
+  <TurboTick_HudYou>你</TurboTick_HudYou>
+  <TurboTick_HudHost>房主</TurboTick_HudHost>
+  <TurboTick_HudController>控制者</TurboTick_HudController>
+  <TurboTick_HudReadOnly>只读</TurboTick_HudReadOnly>
+  <TurboTick_HudLobby>房间待命</TurboTick_HudLobby>
+  <TurboTick_HudSynced>同步正常 · tick {0}</TurboTick_HudSynced>
+  <TurboTick_HudSyncing>同步存档中</TurboTick_HudSyncing>
+  <TurboTick_HudFaulted>同步已挂起</TurboTick_HudFaulted>
+  <TurboTick_HudAway>离开地图</TurboTick_HudAway>
+  <TurboTick_HudCursorHidden>指针已隐藏</TurboTick_HudCursorHidden>
+  <TurboTick_HudOtherMap>另一张地图</TurboTick_HudOtherMap>
+  <TurboTick_HudStale>等待状态</TurboTick_HudStale>
+  <TurboTick_HudPlayers>玩家</TurboTick_HudPlayers>
+  <TurboTick_HudRoom>房间</TurboTick_HudRoom>
+  <TurboTick_HudOnMap>地图中</TurboTick_HudOnMap>
 </LanguageData>
