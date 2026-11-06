@@ -1,8 +1,8 @@
-# TurboTick 0.5.2 headless 容器部署
+# TurboTick 0.6.0 headless 容器部署
 
 本版是容器预览：入口与部署流程验证通过，随机存档长期锁步仍可能分叉，先在独立数据目录验证并保留旧包。稳定版 latest 不随预览更新。
 
-镜像：`ghcr.io/lumidust/turbotick-headless:0.5.2`，仅 **linux/amd64**，基础镜像 Ubuntu 24.04。它启动原生 Linux RimWorld 常驻模拟，客户端仍参与锁步模拟。旧 `ghcr.io/lumidust/turbotick-server:0.5.1` 是已退役独立 .NET 网络服的历史镜像，保留原标签，不将新内容覆盖到旧标签。
+镜像：`ghcr.io/lumidust/turbotick-headless:0.6.0`，仅 **linux/amd64**，基础镜像 Ubuntu 24.04。它启动原生 Linux RimWorld 常驻模拟，客户端仍参与锁步模拟。旧 `ghcr.io/lumidust/turbotick-server:0.5.1` 是已退役独立 .NET 网络服的历史镜像，保留原标签，不将新内容覆盖到旧标签。
 
 镜像仅包含官方 SteamCMD 小型 bootstrap、运行库、部署脚本以及已构建的完整 TurboTick Mod。**原版游戏、DLC、Harmony、Steam 凭据均不在镜像内**；前两者由安装阶段准备，Harmony 从官方工坊独立下载。构建镜像不编译 Mod。游戏 build、完整 Mod 文件、加载顺序与配置必须同所有客户端一致。
 
@@ -86,7 +86,7 @@ docker run --rm --platform linux/amd64 --user 10001:10001 \
   --mount type=bind,src="$PWD/data/game",dst=/game \
   --mount type=bind,src="$PWD/data/profile",dst=/profile \
   --mount type=bind,src="$PWD/data/state",dst=/state \
-  ghcr.io/lumidust/turbotick-headless:0.5.2 install --skip-download
+  ghcr.io/lumidust/turbotick-headless:0.6.0 install --skip-download
 ```
 
 缺少游戏布局、执行位、Harmony 或写权限即报错。`--skip-download` 与 `--update-harmony` 互斥。
@@ -172,15 +172,15 @@ docker compose -f docker-compose.yml -f deploy/container/compose.admin.example.y
 
 ## 7. 镜像构建与发布接口
 
-Release/CI 准备 **已构建且与本版本 Release 完全相同**的完整目录 `artifacts/container-mod/TurboTick`。其 About 版本必须 `0.5.2`，并包含 `About/About.xml`、`LoadFolders.xml`、`1.7/Assemblies/TurboTick.dll`、`TurboTick.Networking.dll`、`TurboTick.Simulation.dll` 及所有资源。该目录不是镜像内重新编译的产物。
+Release/CI 准备 **已构建且与本版本 Release 完全相同**的完整目录 `artifacts/container-mod/TurboTick`。其 About 版本必须 `0.6.0`，并包含 `About/About.xml`、`LoadFolders.xml`、`1.7/Assemblies/TurboTick.dll`、`TurboTick.Networking.dll`、`TurboTick.Simulation.dll` 及所有资源。该目录不是镜像内重新编译的产物。
 
 ```bash
 # CI 已把 Release Mod 解包到 artifacts/container-mod/TurboTick 后：
 docker buildx build --platform linux/amd64 --load \
-  -t ghcr.io/lumidust/turbotick-headless:0.5.2 .
-bash scripts/test-container.sh ghcr.io/lumidust/turbotick-headless:0.5.2
+  -t ghcr.io/lumidust/turbotick-headless:0.6.0 .
+bash scripts/test-container.sh ghcr.io/lumidust/turbotick-headless:0.6.0
 # 发布由 Release 流程执行；不会改写 turbotick-server:0.5.1。
-docker push ghcr.io/lumidust/turbotick-headless:0.5.2
+docker push ghcr.io/lumidust/turbotick-headless:0.6.0
 ```
 
 Docker context 为 allowlist，仅包含该完整 payload、容器脚本、现有 SteamCMD 安装器与 LICENSE；排除源码、游戏、Harmony、`.env` 与缓存。镜像构建生成 `/opt/turbotick/payload.sha256.json`，用于完整目录核对，原 payload 字节不变。

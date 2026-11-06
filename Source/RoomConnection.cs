@@ -87,11 +87,13 @@ internal static class RoomConnection
         socket.WorldStarted += (session, manifest) => PostWorld(() =>
         {
             Status = "共享殖民地已开始，正在同步存档…";
+            AuthoritativeReplica.OnWorldStarted(session);
             // Even the publisher loads the accepted snapshot; origin does not prove its live state still
             // equals the bytes saved before the asynchronous upload.
             SharedColony.OnWorldStarted(session, manifest);
             DownloadAndLoad(manifest, id, SharedColony.Session.LoadGeneration);
         });
+        socket.FrameReceived += frame => AuthoritativeReplica.Receive(frame);
         socket.Ticked += tick => PostWorld(() => SharedColony.OnTick(tick));
         socket.CommandsReceived += commands => PostWorld(() => SharedColony.OnCommands(commands));
         socket.DesyncDetected += (tick, detail) => PostWorld(() => SharedColony.OnDesync(tick, detail));

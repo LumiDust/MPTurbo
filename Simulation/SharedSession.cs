@@ -91,6 +91,15 @@ public sealed class TickBarrier
             if (Interlocked.CompareExchange(ref _serverTick, tick, current) == current) break;
     }
 
+    /// <summary>Display replica: adopt the host's tick without simulating it. The replica's objects are
+    /// overwritten by authoritative frames, so this only keeps clocks and UI in step.</summary>
+    public void Observe(int tick)
+    {
+        if (tick < 0) throw new ArgumentOutOfRangeException(nameof(tick));
+        Volatile.Write(ref _appliedTick, tick);
+        if (tick > Volatile.Read(ref _serverTick)) Volatile.Write(ref _serverTick, tick);
+    }
+
     public bool TryAdvance()
     {
         if (!CanAdvance) return false;

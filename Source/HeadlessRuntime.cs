@@ -92,7 +92,7 @@ internal static class HeadlessRuntime
                 {
                     var hello = CompatibilityManifest.Build(inputs, "DedicatedSimulation", export, CancellationToken.None);
                     candidate = new DedicatedServer(new ServerOptions(host, port, dataDirectory, hello.GameVersion,
-                        hello.ModHash, !controllerOnly, AdminPassword: adminPassword) { RequireSimulation = true });
+                        hello.ModHash, !controllerOnly, AdminPassword: adminPassword) { RequireSimulation = true, Authoritative = true });
                     await candidate.StartAsync().ConfigureAwait(false);
                     // A persisted room from another modpack must not be silently overwritten or simulated.
                     if (candidate.LockedGameVersion != hello.GameVersion || candidate.LockedModHash != hello.ModHash)
@@ -130,6 +130,40 @@ internal static class HeadlessRuntime
         nextConnect = Clock.Now + 10;
     }
 
+    /// <summary>Publishes the host's pawns so display replicas can follow without simulating. Two ticks per
+    /// frame is enough for smooth rendering and halves the payload.</summary>
+    private const int FrameInterval = 2;
+    private static int lastPublishedTick = -1;
+    private static int lastFrameLogTick = -1;
+    private static int framesSent;
+    private static int lastFrameTick = -1;
+
+    private static void PublishFrame()
+    {
+        if (server is null || !SharedColony.Gating) return;
+        var tick = Find.TickManager?.TicksGame ?? -1;
+        if (tick <= lastPublishedTick || tick % FrameInterval != 0) return;
+        lastPublishedTick = tick;
+        try
+        {
+            var pawns = new List<ReplicaPawn>();
+            foreach (var map in Find.Maps)
+                foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+                    pawns.Add(new ReplicaPawn(pawn.thingIDNumber, map.uniqueID, pawn.Position.x, pawn.Position.z,
+                        pawn.Rotation.AsInt, pawn.CurJobDef?.defName,
+                        pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f));
+            var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns));
+            Interlocked.Add(ref framesSent, sent);
+            Volatile.Write(ref lastFrameTick, tick);
+            if (sent > 0 && (lastFrameLogTick < 0 || tick - lastFrameLogTick >= 600))
+            {
+                lastFrameLogTick = tick;
+                Log.Message($"[TurboTick headless] 权威帧 tick={tick}：{pawns.Count} 个角色 -> {sent} 个显示副本。");
+            }
+        }
+        catch (Exception error) { Log.Warning("[TurboTick headless] frame publish: " + error.Message); }
+    }
+
     internal static void Update()
     {
         if (!Active) return;
@@ -147,6 +181,7 @@ internal static class HeadlessRuntime
             return;
         }
         if (stopping) return;
+        PublishFrame();
         if (RoomConnection.Client?.IsConnected == true)
         {
             attached = true;
@@ -343,7 +378,12 @@ internal static class HeadlessRuntime
                 epoch = server?.Epoch, serverTick = server?.Tick, appliedTick = SharedColony.Session.Barrier.AppliedTick,
                 gameTick = Current.ProgramState == ProgramState.Playing && Current.Game is not null ? Find.TickManager?.TicksGame : null,
                 phase = SharedColony.Session.Phase.ToString(), checkpointTick = server?.CheckpointTick,
-                connected = RoomConnection.Client?.IsConnected == true, modHash = server?.LockedModHash
+                connected = RoomConnection.Client?.IsConnected == true, modHash = server?.LockedModHash,
+                authoritative = server is { } running && running.Session?.Authoritative == true,
+                lastFrameTick = Volatile.Read(ref lastFrameTick),
+                framesSent = Volatile.Read(ref framesSent),
+                peers = server?.PeerCount, joinedPeers = server?.JoinedPeerCount,
+                replicas = server?.DisplayReplicaCount
             }, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(path + ".tmp", path, overwrite: true);
         }

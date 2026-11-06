@@ -52,6 +52,9 @@ internal sealed record WireMessage
     public string? Sha256 { get; init; }
     public GameCommand? Command { get; init; }
     public List<GameCommand>? Commands { get; init; }
+    public AuthoritativeFrame? Frame { get; init; }
+    /// <summary>Present on Started: joining peers are display replicas, not simulators.</summary>
+    public bool Authoritative { get; init; }
 
     internal static WireMessage Error(string code, string message, long requestId = 0, bool fatal = false) =>
         new() { Type = "Error", Code = code, Message = message, RequestId = requestId, Fatal = fatal };

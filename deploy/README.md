@@ -1,22 +1,22 @@
 # TurboTick headless 专服部署
 
-**0.5.2 容器预览 · RimWorld 1.7 · 网络协议 v4**。本文只使用通用占位值：`ACCOUNT` 为有权下载游戏的 Steam 账号，`SERVER_HOST` 为玩家可达地址，`BUILD` 为已核对的完整游戏 build，`PROXY_HOST:PROXY_PORT` 为可选代理。Linux 根目录示例为 `/srv/turbotick`，Windows 为 `C:\Servers\TurboTick`。
+**0.6.0 权威同步 · RimWorld 1.7 · 网络协议 v4**。本文只使用通用占位值：`ACCOUNT` 为有权下载游戏的 Steam 账号，`SERVER_HOST` 为玩家可达地址，`BUILD` 为已核对的完整游戏 build，`PROXY_HOST:PROXY_PORT` 为可选代理。Linux 根目录示例为 `/srv/turbotick`，Windows 为 `C:\Servers\TurboTick`。
 
 本版作为容器预览发布：安装/运行隔离、入口与健康检查已验证，但新随机存档的双端长跑仍观察到锁步分叉，故障会挂起时间线。先用独立数据目录试运行，保留旧包和恢复数据，不把镜像健康状态当作长期模拟一致的证明。稳定版 latest 不随此预览更新。
 
-0.5.2 的专服只有 **headless 常驻模拟**，可选 Linux 原生/systemd、Windows 原生或 Linux Docker。它加载真正的 RimWorld、Harmony、TurboTick 和匹配模组，执行完整模拟、保存检查点，全部玩家退出后仍可推进世界。客户端仍执行完整 lockstep 模拟；新玩家加入时所有模拟副本共同重载检查点，会有一次加载停顿。
+0.6.0 的专服只有 **headless 常驻模拟**，可选 Linux 原生/systemd、Windows 原生或 Linux Docker。它加载真正的 RimWorld、Harmony、TurboTick 和匹配模组，执行完整模拟、保存检查点，全部玩家退出后仍可推进世界。客户端仍执行完整 lockstep 模拟；新玩家加入时所有模拟副本共同重载检查点，会有一次加载停顿。
 
 旧独立 .NET 网络服已退役，旧 `ghcr.io/lumidust/turbotick-server` 镜像停止新发布。≤0.5.1 的历史附件保留用于回退，迁移见[旧独立网络服迁移](#旧独立网络服迁移)。
 
 ## 选择下载与部署方式
 
-从 [0.5.2 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.5.2) 下载并保存原包及 `SHA256SUMS`：
+从 [0.6.0 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.6.0) 下载并保存原包及 `SHA256SUMS`：
 
 | 下载项 | 使用者与内容 |
 |---|---|
-| `TurboTick-0.5.2-mod-1.7.zip` | 所有玩家；完整 `TurboTick/`，解压到各自游戏 `Mods` |
-| `TurboTick-0.5.2-headless-installer.zip` | 服主；同字节的 `TurboTick/`、`scripts/steamcmd/`、`docker-compose.yml`、`.env.example`、`deploy/container/`、本说明、systemd 模板及许可证 |
-| `ghcr.io/lumidust/turbotick-headless:0.5.2` | Docker headless 镜像，仅 **linux/amd64** |
+| `TurboTick-0.6.0-mod-1.7.zip` | 所有玩家；完整 `TurboTick/`，解压到各自游戏 `Mods` |
+| `TurboTick-0.6.0-headless-installer.zip` | 服主；同字节的 `TurboTick/`、`scripts/steamcmd/`、`docker-compose.yml`、`.env.example`、`deploy/container/`、本说明、systemd 模板及许可证 |
+| `ghcr.io/lumidust/turbotick-headless:0.6.0` | Docker headless 镜像，仅 **linux/amd64** |
 
 部署附件不含 Dockerfile 或用于构建镜像的 `artifacts/container-mod` 输入目录，也不含游戏、Harmony、账号缓存、密码、存档或日志；使用已发布镜像无需本地构建。镜像打包 Ubuntu 系统依赖、SteamCMD bootstrap、容器入口和该 Release 的同字节 TurboTick Mod，安装阶段另行下载游戏与 Harmony。游戏及 Harmony 也不嵌入 Mod 附件。
 
@@ -58,9 +58,9 @@ docker compose version
 把 headless 附件及校验文件放到服务器后校验；`SHA256SUMS` 同时列出其他附件时，只校验已下载的附件条目：
 
 ```bash
-grep '  TurboTick-0.5.2-headless-installer.zip$' SHA256SUMS | sha256sum -c -
+grep '  TurboTick-0.6.0-headless-installer.zip$' SHA256SUMS | sha256sum -c -
 sudo install -d -m 0755 /srv/turbotick
-sudo unzip TurboTick-0.5.2-headless-installer.zip -d /srv/turbotick
+sudo unzip TurboTick-0.6.0-headless-installer.zip -d /srv/turbotick
 sudo chown -R "$(id -u):$(id -g)" /srv/turbotick
 cd /srv/turbotick
 mkdir -p data/game data/profile data/state data/steam-cache backups secrets
@@ -81,7 +81,7 @@ cp .env.example .env
 
 游戏只读不影响日常存档与检查点，它们写入 profile/state。两个实例各用独立四目录；setup 与 run 通过共享 deployment 锁互斥，安装、更新和运行不可并行。先正常停止 headless，再运行 installer；让 installer 退出后再启动 headless。
 
-Compose 中 installer 与 headless 均固定镜像 `ghcr.io/lumidust/turbotick-headless:0.5.2`。编辑 `.env` 中的以下配置；镜像更新时两个模块必须同时使用同一 image 引用：
+Compose 中 installer 与 headless 均固定镜像 `ghcr.io/lumidust/turbotick-headless:0.6.0`。编辑 `.env` 中的以下配置；镜像更新时两个模块必须同时使用同一 image 引用：
 
 ```dotenv
 TURBOTICK_UID=10001
@@ -417,7 +417,7 @@ host、port、data、save、controller-only 也可用 `-turbotick-NAME=VALUE` �
 
 ### 停服备份并固定版本
 
-保留四类材料：原 Release Mod 与部署附件/`SHA256SUMS`、精确游戏 build 与完整 DLC/模组包、profile/state 整体、Compose/运行配置及镜像引用。Steam cache 和管理密码另行受控备份，不作为公开附件。镜像用 `:0.5.2` 固定标签，需要不可变引用时记录 digest，并在 Compose 或 image override 中为 installer/headless **同时**填写 `ghcr.io/lumidust/turbotick-headless@sha256:IMAGE_DIGEST`；当前 `.env` 只配置路径、身份、端口等，不改变 image 字段。
+保留四类材料：原 Release Mod 与部署附件/`SHA256SUMS`、精确游戏 build 与完整 DLC/模组包、profile/state 整体、Compose/运行配置及镜像引用。Steam cache 和管理密码另行受控备份，不作为公开附件。镜像用 `:0.6.0` 固定标签，需要不可变引用时记录 digest，并在 Compose 或 image override 中为 installer/headless **同时**填写 `ghcr.io/lumidust/turbotick-headless@sha256:IMAGE_DIGEST`；当前 `.env` 只配置路径、身份、端口等，不改变 image 字段。
 
 Docker 示例：
 
@@ -427,7 +427,7 @@ docker compose stop -t 90 headless
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 sudo tar --numeric-owner -czf "backups/turbotick-$STAMP.tar.gz" \
   data/game data/profile data/state docker-compose.yml .env
-docker image inspect ghcr.io/lumidust/turbotick-headless:0.5.2 \
+docker image inspect ghcr.io/lumidust/turbotick-headless:0.6.0 \
   --format '{{json .RepoDigests}}' > "backups/image-$STAMP.txt"
 ```
 
@@ -466,7 +466,7 @@ docker compose -p turbotick-test stop -t 90 headless
 2. `sudo systemctl stop turbotick-headless.service`，等待最终检查点和进程退出；停掉其他自启动入口，迁移期间原服务保持停止。
 3. 按 Docker 步骤准备独立目录。把原 **profile 整体**复制到 `data/profile`，原 **state 整体**复制到 `data/state`。同为 Linux 且 build 完全相同时可复制原游戏到 `data/game`；否则显式安装对应 Linux build，并部署**原世界同字节的 TurboTick、Harmony 与其他 Mod 包**。
 4. 将四目录所有权改为容器 UID/GID，运行时路径改成 `/profile`、`/state` 和可选 secret 路径。SteamCMD cache 仅用于 installer，不进入 run。
-5. 在独立副本与不同宿主端口（例如 30573）验证。原生旧版 Mod 与 0.5.2 镜像不匹配时，先按升级流程完成存档导出/新世界发布验证；不要仅凭版本号或编辑 hash 强行恢复。
+5. 在独立副本与不同宿主端口（例如 30573）验证。原生旧版 Mod 与 0.6.0 镜像不匹配时，先按升级流程完成存档导出/新世界发布验证；不要仅凭版本号或编辑 hash 强行恢复。
 6. 验证连接、晚加入、正常停机与重启恢复后，停止测试实例，切到正式 30572。原生服务继续禁用，保留原目录和恢复材料以便回滚。
 
 测试时旧服务与容器即使端口不同，也不共享 live profile/state。容器中的 `/game` 只读，原生安装后残留的启动器不用于 Docker run。

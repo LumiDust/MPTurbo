@@ -62,6 +62,8 @@ public static class SharedColony
     public static bool MayAdvanceTick()
     {
         if (!HasSharedWorld) return true;
+        // A display replica has no local simulation at all; frames carry the state instead.
+        if (AuthoritativeReplica.Frozen) return false;
         if (!Gating || TurboState.Authority.IsHeld) return false;
         // A pause is normal; vanilla Update handles it. No timeout may release a shared world locally.
         if (TurboState.Authority.Current.TimeSpeed == 0 || Find.TickManager?.Paused == true) return true;
@@ -76,6 +78,7 @@ public static class SharedColony
     /// </summary>
     public static void CatchUpTick()
     {
+        if (AuthoritativeReplica.Frozen) return;
         if (HeadlessRuntime.HoldLocalTicks || catchingUp || !Gating || TurboState.Authority.IsHeld
             || TurboState.Authority.Current.TimeSpeed == 0 || Find.TickManager?.Paused == true
             || Find.TickManager?.slower?.ForcedNormalSpeed == true) return;
@@ -128,7 +131,7 @@ public static class SharedColony
     {
         if (!Gating) return;
         ApplyDue();
-        if (Session.Barrier.AppliedTick % 60 == 0) ReportHash();
+        if (Session.Barrier.AppliedTick % HashEvery == 0) ReportHash();
         if (RoomConnection.IsCheckpointOwner && !HeadlessRuntime.StopRequested
             && Session.Barrier.AppliedTick - lastCheckpointTick >= CheckpointInterval)
         {
@@ -140,6 +143,13 @@ public static class SharedColony
     /// <summary>Periodic canonical hash so the server can prove all peers still simulate the same colony.</summary>
     private static int lastHashedTick = -1;
     private static bool reportingArmed;
+    // Diagnostic override: a divergence between two samples is otherwise reported only as a bucket.
+    private static readonly int HashEvery = Math.Max(1,
+        int.TryParse(Environment.GetEnvironmentVariable("TURBOTICK_HASH_EVERY"), out var every) ? every : 60);
+    // With per-tick sampling the always-on probe is pawn-only; this window forces the full colony so a
+    // divergence caused by things can be seen at the exact tick it starts.
+    private static readonly int FullFrom = int.TryParse(Environment.GetEnvironmentVariable("TURBOTICK_HASH_FULL_FROM"), out var from) ? from : -1;
+    private static readonly int FullTo = int.TryParse(Environment.GetEnvironmentVariable("TURBOTICK_HASH_FULL_TO"), out var to) ? to : -1;
 
     private static void ReportHash()
     {
@@ -149,19 +159,40 @@ public static class SharedColony
         // Only report once this peer actually runs the shared colony; a peer still sitting in its own
         // quicktest colony would otherwise publish unrelated hashes and look like a desync.
         if (!reportingArmed || tick <= lastHashedTick) return;
+        // A display replica never simulated that tick, so its hash would only look like a desync.
+        if (AuthoritativeReplica.Frozen) return;
         lastHashedTick = tick;
         try
         {
-            var (entries, categories) = DescribeColony();
+            if (HashEvery == 1 && !(tick >= FullFrom && tick <= FullTo))
+            {
+                // Cheap every-tick probe used only while localising a divergence.
+                var pawnOnly = CollectPawns();
+                SimulationDiagnostics.Hash(tick, StateHash.Compute(pawnOnly), [StateHash.Compute(pawnOnly)], pawnOnly);
+                _ = RoomConnection.ReportHash(tick, StateHash.Compute(pawnOnly), [StateHash.Compute(pawnOnly)]);
+                return;
+            }
+            var (entries, categories, pawns) = DescribeColony();
             var hash = StateHash.Compute(entries);
-            SimulationDiagnostics.Hash(tick, hash, categories);
+            SimulationDiagnostics.Hash(tick, hash, categories, HashEvery == 1 ? pawns : null);
             _ = RoomConnection.ReportHash(tick, hash, categories);
         }
         catch (Exception error) { Log.Warning("[TurboTick] 状态哈希计算失败：" + error.Message); }
     }
 
+    /// <summary>Pawn-only projection, cheap enough to sample every tick while hunting a divergence.</summary>
+    internal static List<string> CollectPawns()
+    {
+        var pawns = new List<string>();
+        foreach (var map in Find.Maps)
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned)
+                pawns.Add(StateHash.Pawn(pawn.thingIDNumber, map.Index, pawn.Position.x, pawn.Position.z,
+                    pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f, pawn.CurJobDef?.defName ?? ""));
+        return pawns;
+    }
+
     /// <summary>Splits the colony into categories so a divergence can name what actually differs.</summary>
-    internal static (List<string> All, List<string> Categories) DescribeColony()
+    internal static (List<string> All, List<string> Categories, List<string> Pawns) DescribeColony()
     {
         var pawns = new List<string>();
         var things = new List<string>();
@@ -182,7 +213,7 @@ public static class SharedColony
         all.AddRange(pawns);
         all.AddRange(things);
         all.AddRange(designations);
-        return (all, [StateHash.Compute(pawns), StateHash.Compute(things), StateHash.Compute(designations)]);
+        return (all, [StateHash.Compute(pawns), StateHash.Compute(things), StateHash.Compute(designations)], pawns);
     }
 
     private static float lastRecoveryAt = -999f;
@@ -191,6 +222,7 @@ public static class SharedColony
     {
         Session.Fault($"状态分叉：tick {tick}（{detail}）与其他玩家不一致");
         Log.Error($"[TurboTick] 检测到状态分叉（tick {tick}，类别 {detail}）。");
+        SimulationDiagnostics.Divergence(tick, detail);
         var settings = TurboTickMod.Settings;
         if (settings == null || !settings.autoRecover) return;
         // Reuse the join path: reconnect, reload the checkpoint and replay the delta. Rate-limited so a
@@ -294,12 +326,15 @@ public static class SharedColony
 
     public static void Update()
     {
+        AuthoritativeReplica.Update();
         if (loadPending && Clock.Now - loadStartedAt > 120f)
         {
             loadPending = false;
             OnWorldLoadFailed("载入超时：120 秒内没有切换到共享存档");
         }
         if (!Gating) return;
+        // A display replica receives state in frames; replaying commands locally would fork it again.
+        if (AuthoritativeReplica.Frozen) return;
         // While paused the game does not tick, so drain anything that became due.
         ApplyDue();
     }

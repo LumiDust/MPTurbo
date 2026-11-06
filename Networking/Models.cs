@@ -5,8 +5,8 @@ namespace TurboTick.Networking;
 /// <summary>Values shared by this standalone protocol, with no game assembly dependencies.</summary>
 public static class NetworkProtocol
 {
-    public const int Version = 4;
-    public const string ClientVersion = "0.5.2";
+    public const int Version = 5;
+    public const string ClientVersion = "0.6.0";
     public const int MaximumFrameLength = 4 * 1024 * 1024;
     public const int SnapshotChunkSize = 256 * 1024;
 }
@@ -85,13 +85,25 @@ public static class PresenceRules
 }
 
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
-public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0);
+public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0,
+    bool Authoritative = false);
+
+/// <summary>One pawn exactly as the authoritative host simulates it. Display replicas apply this instead
+/// of running their own simulation, so they cannot diverge.</summary>
+public sealed record ReplicaPawn(int Id, int Map, float X, float Z, int Rotation, string? Job, float Health);
+
+/// <summary>A tick of authoritative colony state. Sent to display replicas only; the host's own
+/// simulation peer never receives its own frame.</summary>
+public sealed record AuthoritativeFrame(int Tick, IReadOnlyList<ReplicaPawn> Pawns);
 public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 30572, string DataDirectory = "Saved",
     string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true, int MaxHistory = 200_000,
     string? AdminPassword = null)
 {
     /// <summary>Keep the lockstep timeline behind the resident process simulation's reported progress.</summary>
     public bool RequireSimulation { get; init; } = false;
+
+    /// <summary>The resident is the only simulator; joining clients are display replicas.</summary>
+    public bool Authoritative { get; init; } = false;
 
     // Options are routinely printed by hosts; never include the credential in the generated record text.
     public override string ToString() => $"ServerOptions {{ Address = {Address}, Port = {Port}, AdminEnabled = {!string.IsNullOrEmpty(AdminPassword)} }}";

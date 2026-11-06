@@ -66,12 +66,17 @@ public sealed partial class DedicatedServer : IAsyncDisposable
     private const int HashWindow = 600;
     public int TrackedHashTicks => _firstHashAtTick.Count;
 
+    /// <summary>Diagnostics for authoritative frames: who is connected and who should receive them.</summary>
+    public int PeerCount => _peers.Count;
+    public int JoinedPeerCount => _peers.Values.Count(peer => peer.Joined);
+    public int DisplayReplicaCount => _peers.Values.Count(peer => peer.Joined && !peer.IsSimulation);
+
     public SessionInfo? Session
     {
         get
         {
             var world = WorldManifest;
-            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick);
+            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick, _options.Authoritative);
         }
     }
 
@@ -455,9 +460,20 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         .OrderBy(p => p.Id).Select(p => new PlayerInfo(p.Id, p.PlayerName, p.ColorIndex, p.CanEdit,
             _checkpointOwnerId == p.Id, p.LatencyMilliseconds, _hostId == p.Id)).ToArray();
 
-    // Roster changes are serialized by _stateGate; pointer packets never enter _commandGate/history.
-    private void BroadcastPlayers()
+    /// <summary>Display replicas follow the host's simulation instead of running their own. The frame is
+    /// never echoed back to the simulation peer, which already owns that state.</summary>
+    public int BroadcastFrame(AuthoritativeFrame frame)
     {
+        ArgumentNullException.ThrowIfNull(frame);
+        var message = new WireMessage { Type = "Frame", Frame = frame, Epoch = Epoch, Tick = frame.Tick };
+        var sent = 0;
+        foreach (var recipient in _peers.Values)
+            if (recipient.Joined && !recipient.IsSimulation) { recipient.Queue(message); sent++; }
+        return sent;
+    }
+
+    // Roster changes are serialized by _stateGate; pointer packets never enter _commandGate/history.
+    private void BroadcastPlayers()    {
         var message = new WireMessage { Type = "Players", Players = CapturePlayers() };
         foreach (var recipient in _peers.Values)
             if (recipient.Joined) recipient.Queue(message);
@@ -649,7 +665,9 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 if (_peers.TryGetValue(id, out var joiner) && joiner.Joined) waiting.Add(joiner);
             _pendingJoiners.Clear();
         }
-        if (_options.RequireSimulation && waiting.Count > 0)
+        // A display replica loads its own copy of the snapshot and then follows frames; it never reports
+        // progress, so holding the resident for it would stall the world forever.
+        if (_options.RequireSimulation && !_options.Authoritative && waiting.Count > 0)
         {
             // Verse snapshots do not serialize every transient cache. A live owner and a freshly
             // deserialized joiner can diverge despite matching RNG/IDs. Establish one canonical load
@@ -861,7 +879,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         peer.Queue(new WireMessage
         {
             Type = "Started", Epoch = epoch, Tick = Tick, SnapshotTick = CheckpointTick,
-            WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed)
+            WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed),
+            Authoritative = _options.Authoritative
         });
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];

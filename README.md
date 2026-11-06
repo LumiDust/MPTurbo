@@ -3,28 +3,28 @@
 [![Build](https://github.com/LumiDust/TurboTick/actions/workflows/build.yml/badge.svg)](https://github.com/LumiDust/TurboTick/actions/workflows/build.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**0.5.2 容器预览 · RimWorld 1.7 · 网络协议 v4**
+**0.6.0 权威同步 · RimWorld 1.7 · 网络协议 v4**
 
 独立的共享殖民地联机 Mod，支持多人共同操作同一世界，由**客户端 Mod**和 **headless 常驻模拟专服**组成。游戏端依赖 [Harmony 3](https://steamcommunity.com/sharedfiles/filedetails/?id=2009463077)；不依赖其他联机 Mod。
 
 ## 下载与安装
 
-从 [0.5.2 预览 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.5.2) 下载同一版本的配套附件（[稳定版 latest](https://github.com/LumiDust/TurboTick/releases/latest) 保持独立）；玩家也可订阅 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)。固定世界建议保留 Release 原包，避免客户端与服务端在不同时间更新。
+从 [0.6.0 预览 Release](https://github.com/LumiDust/TurboTick/releases/tag/v0.6.0) 下载同一版本的配套附件（[稳定版 latest](https://github.com/LumiDust/TurboTick/releases/latest) 保持独立）；玩家也可订阅 [Steam 创意工坊](https://steamcommunity.com/sharedfiles/filedetails/?id=3834465013)。固定世界建议保留 Release 原包，避免客户端与服务端在不同时间更新。
 
 | Release 附件 | 用途 |
 |---|---|
-| `TurboTick-0.5.2-mod-1.7.zip` | 玩家客户端；解压后把完整 `TurboTick` 目录放入游戏 `Mods` |
-| `TurboTick-0.5.2-headless-installer.zip` | 专服部署；包含同字节的 TurboTick Mod、SteamCMD 安装器、Compose 配置、容器入口、环境示例、部署说明和 systemd 模板 |
+| `TurboTick-0.6.0-mod-1.7.zip` | 玩家客户端；解压后把完整 `TurboTick` 目录放入游戏 `Mods` |
+| `TurboTick-0.6.0-headless-installer.zip` | 专服部署；包含同字节的 TurboTick Mod、SteamCMD 安装器、Compose 配置、容器入口、环境示例、部署说明和 systemd 模板 |
 
 玩家启用 Harmony、TurboTick 和与专服匹配的其他模组后重启游戏。部署包及镜像均不内嵌原版游戏、Harmony 或 Steam 凭据；游戏和官方 Harmony 工坊包由安装阶段获取，也可使用已有的匹配安装。
 
-0.5.2 起专服统一采用 headless：Linux 原生/systemd、Windows 原生，或下述 Linux Docker 镜像。旧独立 .NET 网络服已退役，`turbotick-server` 镜像停止新发布；**≤0.5.1 的历史 Release 附件保留用于回退**。历史网络服世界的迁移方法见[部署指南](https://github.com/LumiDust/TurboTick/blob/main/deploy/README.md#旧独立网络服迁移)。
+0.6.0 起专服统一采用 headless：Linux 原生/systemd、Windows 原生，或下述 Linux Docker 镜像。旧独立 .NET 网络服已退役，`turbotick-server` 镜像停止新发布；**≤0.5.1 的历史 Release 附件保留用于回退**。历史网络服世界的迁移方法见[部署指南](https://github.com/LumiDust/TurboTick/blob/main/deploy/README.md#旧独立网络服迁移)。
 
 ## 部署专服
 
 | 方式 | 选择与要求 |
 |---|---|
-| **Docker Compose** | 镜像 `ghcr.io/lumidust/turbotick-headless:0.5.2`，仅 **linux/amd64**；宿主持久化游戏、profile、state 和安装账号缓存 |
+| **Docker Compose** | 镜像 `ghcr.io/lumidust/turbotick-headless:0.6.0`，仅 **linux/amd64**；宿主持久化游戏、profile、state 和安装账号缓存 |
 | **Linux 原生 / systemd** | SteamCMD、匹配的 Linux 游戏、原生运行依赖、Harmony 和 TurboTick；由 systemd 托管游戏进程 |
 | **Windows 原生** | PowerShell 7、SteamCMD、匹配的 Windows 游戏、Harmony 和 TurboTick |
 
@@ -48,11 +48,13 @@ docker compose up -d headless
 
 已接入标记、建造与取消、小人征召与指令、禁用、工作优先级、区域、配方等操作同步，以及快照续传、检查点与状态校验。交易、远行队默认限制房主操作，运输舱同步为实验开关。
 
-专服通过 `RimWorld -headless -turbotick-server` 执行完整模拟和检查点，全部玩家离开后仍可推进世界。它仍是 **lockstep**：每个客户端也执行完整模拟。新玩家加入时，常驻模拟建立共同检查点，所有已连接模拟副本一起重载后继续，期间会有一次加载停顿。隐藏的常驻模拟身份不占房主名额，也不计入在线玩家。
+专服通过 `RimWorld -headless -turbotick-server` 执行完整模拟和检查点，全部玩家离开后仍可推进世界。服务端是**唯一模拟者**：hosted 客户端加入后加载同一存档取得全部对象，但**不推进本地 tick**，角色位置与朝向由服务器按帧下发后直接写入本地对象。因为副本不再自己模拟，锁步哈希比对对它不再适用，也就不存在"逐位一致"的分叉。
+
+服务端每 2 tick（约 30 帧/秒）下发一帧，只发给显示副本，不回传给自身模拟。拿 `session.Authoritative` 的客户端自动进入该模式；未升级的客户端因协议版本不匹配会被拒绝。
 
 ## 版本、权限与连接
 
-- 客户端与专服使用 **0.5.2 / 协议 v4**。使用 `:0.5.2` 镜像时，所有玩家都部署该 Release 的 `TurboTick-0.5.2-mod-1.7.zip`；自行重新编译的 DLL 也应统一分发同一份完整包。
+- 客户端与专服使用 **0.6.0 / 协议 v4**。使用 `:0.6.0` 镜像时，所有玩家都部署该 Release 的 `TurboTick-0.6.0-mod-1.7.zip`；自行重新编译的 DLL 也应统一分发同一份完整包。
 - 握手校验**精确 GameBuild、DLC、模组内容、加载顺序和配置**，包括程序集和 XML。仅“都是 1.7”、版本显示相同或模组同名仍可能得到 `ModHashMismatch`。
 - 已持久化世界继续使用原有兼容指纹。换新镜像不会自动迁移旧 world 指纹；更新前保留原镜像版本、游戏及完整模组包、profile/state 备份，按[升级与回滚流程](https://github.com/LumiDust/TurboTick/blob/main/deploy/README.md#备份版本固定升级与回滚)处理。
 - 房主、倍率控制者、检查点所有者分别由服务器管理。管理采用运行时配置的**共享密码文件**：设置 `TURBOTICK_ADMIN_PASSWORD_FILE` 后，在大厅「管理服务器」独立认证，可查看状态、归档旧局并重开空房间；未配置密码时管理功能关闭。客户端不保存管理密码。
@@ -63,7 +65,9 @@ docker compose up -d headless
 
 基础 headless 模拟已在 **RimWorld 1.7.5000 rev1275** 上进行 Windows 原生客户端与 Linux headless 的实机验收，使用 Core、Harmony、TurboTick 的匹配组合。tick **120–21780** 范围内的 **334 个同 tick 共同采样**，状态哈希与 RNG 全部一致；同时验证了晚加入、暂停恢复、全部外部玩家退出后继续推进，以及检查点停机与重启恢复。
 
-0.5.2 容器入口的离线契约、实际游戏启动、健康检查与 SIGTERM 流程已验证；新增随机存档的双端长跑仍出现锁步分叉，故本版按预览发布，故障时挂起时间线，未替换既有正式服务。上述 334 个匹配采样属于此前特定存档的结果，不代表其他存档长期一致。每套部署应先在独立 profile/state 副本中验证连接、发布、晚加入和停机恢复。
+0.6.0 权威同步闭环已实测：Windows 客户端作为显示副本接入 Linux headless，累计接收 1200+ 帧、服务端推进到 15000+ tick，期间**零分叉**（副本不参与模拟，哈希比对不再适用）。同时保留此前锁步时代的 334 个同 tick 一致采样，作为主机侧模拟自身的确定性证据。
+
+已验证范围限于基础组合（Core + Harmony + TurboTick）。显示副本当前同步角色位置、朝向与作业名；物品、建筑、spawn/destroy 等完整状态增量尚未全量覆盖，第三方 Mod 的界面与状态也需逐项接入。每套部署应先在独立 profile/state 副本中验证连接、发布、晚加入和停机恢复。
 
 ## 源码导航与构建
 
@@ -71,7 +75,7 @@ docker compose up -d headless
 |---|---|
 | [Source](https://github.com/LumiDust/TurboTick/tree/main/Source) | 游戏接入、Harmony 补丁、多人界面与 headless 运行角色 |
 | [Networking](https://github.com/LumiDust/TurboTick/tree/main/Networking) | TCP 协议、客户端、专服、快照与管理认证 |
-| [Simulation](https://github.com/LumiDust/TurboTick/tree/main/Simulation) | 锁步时间线、共享操作和确定性状态 |
+| [Simulation](https://github.com/LumiDust/TurboTick/tree/main/Simulation) | 服务端时间线闸门、共享操作、状态哈希与显示副本时钟 |
 | [Tests](https://github.com/LumiDust/TurboTick/tree/main/Tests) | 模拟回归、打包检查及真实 TCP 集成验证 |
 | [scripts](https://github.com/LumiDust/TurboTick/tree/main/scripts) / [scripts/steamcmd](https://github.com/LumiDust/TurboTick/tree/main/scripts/steamcmd) | 构建打包、Mod 部署、SteamCMD 安装器及离线验证 |
 | [deploy](https://github.com/LumiDust/TurboTick/tree/main/deploy) | 公开部署说明、容器运行入口和 systemd 模板 |

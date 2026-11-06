@@ -40,15 +40,44 @@ internal static class SimulationDiagnostics
             Boundary("early-tick", SharedColony.Session.WorldId, arm: false);
     }
 
-    internal static void Hash(int tick, string hash, IReadOnlyList<string> categories)
+    internal static void Hash(int tick, string hash, IReadOnlyList<string> categories, IReadOnlyList<string>? pawns = null)
     {
         if (!hashes) return;
         Write(new { kind = "hash", logicalTick = tick, gameTick = Find.TickManager?.TicksGame,
-            epoch = SharedColony.Session.Epoch, randomState = SimulationRandom.Capture().ToString("x16"), hash, categories });
+            epoch = SharedColony.Session.Epoch, randomState = SimulationRandom.Capture().ToString("x16"), hash, categories, pawns });
     }
 
-    internal static void Event(string kind)
+    /// <summary>Captures why two replicas disagree. The category hash only names a bucket; this records
+    /// the fields a fix would have to explain, and both peers write it for the same tick.</summary>
+    internal static void Divergence(int tick, string detail)
     {
+        if (!hashes) return;
+        var rows = new List<object>();
+        foreach (var map in Find.Maps)
+        {
+            foreach (var thing in map.listerThings.AllThings.OrderBy(t => t.thingIDNumber))
+            {
+                if (thing.def.category is ThingCategory.Mote or ThingCategory.Ethereal) continue;
+                var pawn = thing as Pawn;
+                rows.Add(new
+                {
+                    id = thing.thingIDNumber, def = thing.def.defName, map = map.Index,
+                    x = thing.Position.x, z = thing.Position.z, hp = thing.HitPoints,
+                    job = pawn?.CurJobDef?.defName, health = pawn?.health?.summaryHealth?.SummaryHealthPercent,
+                    needs = pawn?.needs?.AllNeeds?.Select(n => new { def = n.def.defName, level = n.CurLevel }).ToList(),
+                    hediffs = pawn?.health?.hediffSet?.hediffs?
+                        .Select(h => new { def = h.def.defName, part = h.Part?.def?.defName, severity = h.Severity }).ToList()
+                });
+            }
+        }
+        var (all, categories, _) = SharedColony.DescribeColony();
+        Write(new { kind = "divergence", detail, logicalTick = tick, gameTick = Find.TickManager?.TicksGame,
+            world = SharedColony.Session.WorldId,
+            randomState = SimulationRandom.Capture().ToString("x16"),
+            hash = TurboTick.Simulation.StateHash.Compute(all), categories, entities = rows });
+    }
+
+    internal static void Event(string kind)    {
         if (!enabled) return;
         Write(new { kind, phase = SharedColony.Session.Phase.ToString(), scribe = Scribe.mode.ToString(),
             gameTick = Find.TickManager?.TicksGame, logicalTick = SharedColony.Session.Barrier.AppliedTick,
@@ -73,7 +102,7 @@ internal static class SimulationDiagnostics
                     health = pawn?.health?.summaryHealth?.SummaryHealthPercent });
             }
         }
-        var (all, categories) = SharedColony.DescribeColony();
+        var (all, categories, _) = SharedColony.DescribeColony();
         Write(new { kind, worldId, epoch = SharedColony.Session.Epoch,
             logicalTick = SharedColony.Session.Barrier.AppliedTick, gameTick = Find.TickManager?.TicksGame,
             randomState = SimulationRandom.Capture().ToString("x16"),

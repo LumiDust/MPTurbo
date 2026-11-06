@@ -37,6 +37,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     public event Action<SessionInfo, SnapshotManifest>? WorldStarted;
     public event Action<int>? Ticked;
     public event Action<IReadOnlyList<GameCommand>>? CommandsReceived;
+    public event Action<AuthoritativeFrame>? FrameReceived;
     public event Action<int, string>? DesyncDetected;
     public event Action<int, SnapshotManifest>? CheckpointPublished;
     public event Action? CatchUpIncomplete;
@@ -602,7 +603,10 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
-                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick), started.Manifest!));
+                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative), started.Manifest!));
+                        break;
+                    case "Frame":
+                        if (message.Frame is { } frame) Publish(session, () => FrameReceived?.Invoke(frame));
                         break;
                     case "Tick":
                         var tick = message.Tick;
@@ -716,8 +720,7 @@ public sealed class DedicatedClient : IAsyncDisposable
     }
 
     /// <summary>Orders observer callbacks and drops anything belonging to a superseded connection.</summary>
-    private void Publish(Session session, Action action)
-    {
+    private void Publish(Session session, Action action)    {
         _notifications.Writer.TryWrite(() =>
         {
             if (session.Generation != Volatile.Read(ref _notificationGeneration) || session.IsClosed ||
