@@ -158,8 +158,14 @@ internal static class HeadlessRuntime
                     thing.stackCount, thing.HitPoints);
                 if (lastThings.TryGetValue(id, out var previous) && previous == current) continue;
                 lastThings[id] = current;
-                if (baselineReady) (changed ??= []).Add(new ReplicaThing(id, current.Item1, current.Item2,
-                    current.Item3, current.Item4, current.Item5, current.Item6));
+                if (baselineReady)
+                {
+                    // The object's own ExposeData carries every Comp, including third-party ones, so no
+                    // per-mod knowledge is needed here.
+                    var state = thing is IExposable exposable ? ScribeBridge.Save(exposable) : null;
+                    (changed ??= []).Add(new ReplicaThing(id, current.Item1, current.Item2,
+                        current.Item3, current.Item4, current.Item5, current.Item6, state));
+                }
             }
         }
         if (!baselineReady)

@@ -25,6 +25,8 @@ internal static class AuthoritativeReplica
 
     internal static int LastFrameTick { get; private set; } = -1;
     internal static int AppliedFrames { get; private set; }
+    internal static int StatesApplied { get; private set; }
+    internal static int StatesFailed { get; private set; }
 
     internal static void OnWorldStarted(SessionInfo session)
     {
@@ -64,7 +66,8 @@ internal static class AuthoritativeReplica
         if (frame.Removed is { Count: > 0 } removed)
             foreach (var id in removed) RemoveThing(id);
         if (AppliedFrames % 600 == 0)
-            Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色，{frame.Changed?.Count ?? 0} 个物体变化，累计 {AppliedFrames} 帧。");
+            Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色，{frame.Changed?.Count ?? 0} 个物体变化，" +
+                $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，累计 {AppliedFrames} 帧。");
     }
 
     private static Pawn? FindPawn(int id, int mapId)
@@ -97,6 +100,12 @@ internal static class AuthoritativeReplica
         if (thing.Rotation != rotation) thing.Rotation = rotation;
         if (thing.def.stackLimit > 1 && thing.stackCount != state.Stack) thing.stackCount = state.Stack;
         if (thing.def.useHitPoints && thing.HitPoints != state.HitPoints) thing.HitPoints = state.HitPoints;
+        // Mod state rides along as the object's own Scribe XML; no per-mod handling is required.
+        if (state.State is { Length: > 0 } xml && thing is IExposable exposable)
+        {
+            if (ScribeBridge.Load(exposable, xml)) StatesApplied++;
+            else StatesFailed++;
+        }
     }
 
     private static void RemoveThing(int id) => FindThing(id)?.Destroy(DestroyMode.Vanish);
