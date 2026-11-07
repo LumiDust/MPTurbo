@@ -103,11 +103,17 @@ public sealed record ReplicaThing(int Id, int Map, int X, int Z, int Rotation, i
 /// own frame.</summary>
 public sealed record AuthoritativeFrame(int Tick, IReadOnlyList<ReplicaPawn> Pawns,
     IReadOnlyList<ReplicaThing>? Changed = null, IReadOnlyList<int>? Removed = null,
-    IReadOnlyList<ReplicaPawnState>? PawnState = null);
+    IReadOnlyList<ReplicaPawnState>? PawnState = null, IReadOnlyList<ReplicaCreation>? Created = null);
 
 /// <summary>A pawn's full Scribe state, sent less often than its position. This is what carries needs,
 /// injuries, hediffs, equipment and any third-party Comp without the mod author writing anything.</summary>
 public sealed record ReplicaPawnState(int Id, string State);
+
+/// <summary>An object the host created after the replica loaded its snapshot: a finished wall, a dropped
+/// item, a tamed animal. The replica cannot invent it, so the definition, position and full Scribe state
+/// travel together.</summary>
+public sealed record ReplicaCreation(int Id, int Map, string Def, int X, int Z, int Rotation, int Stack,
+    string? State = null);
 public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 30572, string DataDirectory = "Saved",
     string GameVersion = "1.7", string ModHash = "development", bool EveryoneCanEdit = true, int MaxHistory = 200_000,
     string? AdminPassword = null)

@@ -143,9 +143,10 @@ internal static class HeadlessRuntime
     /// <summary>Only objects that moved, changed stack, or took damage since the previous frame. The first
     /// frame after a load establishes the baseline and sends nothing, because the replica already holds
     /// the identical snapshot. Later frames also report objects that disappeared.</summary>
-    private static (List<ReplicaThing>? Changed, List<int>? Removed) DiffThings()
+    private static (List<ReplicaThing>? Changed, List<int>? Removed, List<ReplicaCreation>? Created) DiffThings()
     {
         List<ReplicaThing>? changed = null;
+        List<ReplicaCreation>? created = null;
         var seen = new HashSet<int>();
         foreach (var map in Find.Maps)
         {
@@ -156,22 +157,27 @@ internal static class HeadlessRuntime
                 seen.Add(id);
                 var current = (map.uniqueID, thing.Position.x, thing.Position.z, thing.Rotation.AsInt,
                     thing.stackCount, thing.HitPoints);
-                if (lastThings.TryGetValue(id, out var previous) && previous == current) continue;
+                var isNew = !lastThings.ContainsKey(id);
+                if (!isNew && lastThings.TryGetValue(id, out var previous) && previous == current) continue;
                 lastThings[id] = current;
-                if (baselineReady)
+                if (!baselineReady) continue;
+                // The object's own ExposeData carries every Comp, including third-party ones, so no
+                // per-mod knowledge is needed here.
+                var state = thing is IExposable exposable ? ScribeBridge.Save(exposable) : null;
+                if (isNew && !(thing is Pawn))
                 {
-                    // The object's own ExposeData carries every Comp, including third-party ones, so no
-                    // per-mod knowledge is needed here.
-                    var state = thing is IExposable exposable ? ScribeBridge.Save(exposable) : null;
-                    (changed ??= []).Add(new ReplicaThing(id, current.Item1, current.Item2,
-                        current.Item3, current.Item4, current.Item5, current.Item6, state));
+                    (created ??= []).Add(new ReplicaCreation(id, current.Item1, thing.def.defName,
+                        current.Item2, current.Item3, current.Item4, current.Item5, state));
+                    continue;
                 }
+                (changed ??= []).Add(new ReplicaThing(id, current.Item1, current.Item2,
+                    current.Item3, current.Item4, current.Item5, current.Item6, state));
             }
         }
         if (!baselineReady)
         {
             baselineReady = true;
-            return (null, null);
+            return (null, null, null);
         }
         List<int>? removed = null;
         foreach (var id in lastThings.Keys.Where(id => !seen.Contains(id)).ToList())
@@ -179,7 +185,7 @@ internal static class HeadlessRuntime
             lastThings.Remove(id);
             (removed ??= []).Add(id);
         }
-        return (changed, removed);
+        return (changed, removed, created);
     }
 
     private static bool baselineReady;
@@ -198,8 +204,8 @@ internal static class HeadlessRuntime
                     pawns.Add(new ReplicaPawn(pawn.thingIDNumber, map.uniqueID, pawn.Position.x, pawn.Position.z,
                         pawn.Rotation.AsInt, pawn.CurJobDef?.defName,
                         pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f));
-            var (changed, removed) = DiffThings();
-            var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns, changed, removed));
+            var (changed, removed, created) = DiffThings();
+            var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns, changed, removed, null, created));
             Interlocked.Add(ref framesSent, sent);
             Volatile.Write(ref lastFrameTick, tick);
             if (sent > 0 && (lastFrameLogTick < 0 || tick - lastFrameLogTick >= 600))
