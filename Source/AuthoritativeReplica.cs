@@ -20,9 +20,15 @@ internal static class AuthoritativeReplica
     /// <summary>True once the server told this peer to follow rather than simulate.</summary>
     internal static bool Enabled => enabled;
 
+    /// <summary>Opt-in local prediction. Measured on a live room it does not hold up: the two simulations
+    /// run independent AI, so roughly a quarter of the pawns exceed the correction radius every frame and
+    /// are snapped back, which reads as teleporting. The display path is the shipping default.</summary>
+    internal static readonly bool Predictive =
+        string.Equals(Environment.GetEnvironmentVariable("TURBOTICK_PREDICTIVE"), "1", StringComparison.Ordinal);
+
     /// <summary>Local simulation must not advance. Derived from the live phase so no tick can slip in
     /// between the load finishing and the first frame.</summary>
-    internal static bool Frozen => enabled && SharedColony.Session.Phase == Simulation.SharedPhase.Playing;
+    internal static bool Frozen => enabled && !Predictive && SharedColony.Session.Phase == Simulation.SharedPhase.Playing;
 
     internal static int LastFrameTick { get; private set; } = -1;
     internal static int AppliedFrames { get; private set; }
@@ -58,7 +64,8 @@ internal static class AuthoritativeReplica
     /// <summary>Game thread: apply the newest frame and follow the host clock.</summary>
     internal static void Update()
     {
-        if (!Frozen) return;
+        // A predictive peer still consumes frames, but as a correction source rather than a state feed.
+        if (!Frozen && !(Predictive && enabled)) return;
         var frame = Interlocked.Exchange(ref pending, null);
         if (frame is null) return;
         if (frame.Tick <= LastFrameTick) return;
@@ -102,7 +109,8 @@ internal static class AuthoritativeReplica
             Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色（滑动中 {SmoothCount()}），{frame.Changed?.Count ?? 0} 个物体变化，" +
                 $"新建 {Created} 失败 {CreateFailures} 缺Def {MissingDefs}，" +
                 $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，" +
-                $"失去地图 {DetachCount()}，帧间隔 最差 {worstGap:0.00}s / 停顿 {hitchCount} 次，超预算丢弃 {DroppedWork}，累计 {AppliedFrames} 帧。");
+                $"失去地图 {DetachCount()}，帧间隔 最差 {worstGap:0.00}s / 停顿 {hitchCount} 次，超预算丢弃 {DroppedWork}，" +
+                $"校正 {corrections}，累计 {AppliedFrames} 帧。");
             hitchCount = 0;
             worstGap = 0f;
         }
@@ -279,6 +287,13 @@ internal static class AuthoritativeReplica
         var pawn = FindPawn(state.Id, state.Map);
         if (pawn is null || !pawn.Spawned) return;
         var target = new Vector3(state.X, 0f, state.Z);
+        if (Predictive)
+        {
+            // Only correct real drift. Snapping to every frame would undo the local pather and bring back
+            // the stutter the predictive path exists to remove.
+            if ((pawn.DrawPos - target).MagnitudeHorizontal() <= CorrectionRadius) return;
+            corrections++;
+        }
         var now = Clock.Now;
         if (motions.TryGetValue(state.Id, out var motion))
         {
@@ -297,6 +312,11 @@ internal static class AuthoritativeReplica
         var rotation = new Rot4(state.Rotation);
         if (pawn.Rotation != rotation) pawn.Rotation = rotation;
     }
+
+    /// <summary>How far a predictive peer may drift before the host's position wins. Roughly one cell:
+    /// smaller than that is ordinary pathing noise, larger means the two simulations disagree.</summary>
+    private static readonly float CorrectionRadius = 1.5f;
+    private static int corrections;
 
     private sealed class Motion
     {
@@ -363,7 +383,9 @@ internal static class ReplicaPlantPrintGuard
 {
     private static bool Prefix(RimWorld.Plant __instance)
     {
-        if (!AuthoritativeReplica.Frozen) return true;
+        // Not gated on Frozen: a predictive peer simulates locally and can also hold an object that lost
+        // its map between a creation and its state, which is exactly what Print throws on.
+        if (!AuthoritativeReplica.Enabled) return true;
         if (__instance.Map is not null && __instance.Spawned && __instance.def?.graphicData is not null
             && __instance.def.plant is not null) return true;
         AuthoritativeReplica.ReportBrokenPlant(__instance);

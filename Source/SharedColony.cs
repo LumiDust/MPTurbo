@@ -65,6 +65,9 @@ public static class SharedColony
     public static bool MayAdvanceTick()
     {
         if (!HasSharedWorld) return true;
+        // A predictive peer runs its own simulation and lets frames correct it, so the barrier must not
+        // gate its tick. Only a pure display replica is frozen.
+        if (AuthoritativeReplica.Predictive && AuthoritativeReplica.Enabled) return true;
         // A display replica has no local simulation at all; frames carry the state instead.
         if (AuthoritativeReplica.Frozen) return false;
         if (!Gating || TurboState.Authority.IsHeld) return false;
