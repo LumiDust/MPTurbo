@@ -201,9 +201,14 @@ internal static class HeadlessRuntime
             var pawns = new List<ReplicaPawn>();
             foreach (var map in Find.Maps)
                 foreach (var pawn in map.mapPawns.AllPawnsSpawned)
-                    pawns.Add(new ReplicaPawn(pawn.thingIDNumber, map.uniqueID, pawn.Position.x, pawn.Position.z,
+                {
+                    // World position, not the integer cell: the replica interpolates between frames and a
+                    // cell-granular value would step one square at a time.
+                    var pos = pawn.DrawPos;
+                    pawns.Add(new ReplicaPawn(pawn.thingIDNumber, map.uniqueID, pos.x, pos.z,
                         pawn.Rotation.AsInt, pawn.CurJobDef?.defName,
                         pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f));
+                }
             var (changed, removed, created) = DiffThings();
             var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns, changed, removed, null, created));
             Interlocked.Add(ref framesSent, sent);

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using HarmonyLib;
 using TurboTick.Networking;
+using UnityEngine;
 using Verse;
 
 namespace TurboTick;
@@ -61,6 +62,13 @@ internal static class AuthoritativeReplica
         var frame = Interlocked.Exchange(ref pending, null);
         if (frame is null) return;
         if (frame.Tick <= LastFrameTick) return;
+        var arrival = Clock.Now;
+        if (lastFrameArrival > 0f)
+        {
+            var measured = arrival - lastFrameArrival;
+            if (measured > 0.001f && measured < 0.5f) frameInterval = frameInterval * 0.8f + measured * 0.2f;
+        }
+        lastFrameArrival = arrival;
         LastFrameTick = frame.Tick;
         AppliedFrames++;
         SharedColony.Session.Barrier.Observe(frame.Tick);
@@ -72,9 +80,22 @@ internal static class AuthoritativeReplica
         if (frame.Created is { Count: > 0 } created)
             foreach (var state in created) CreateThing(state);
         if (AppliedFrames % 600 == 0)
-            Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色，{frame.Changed?.Count ?? 0} 个物体变化，" +
+        {
+            PruneMotions();
+            Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色（滑动中 {SmoothCount()}），{frame.Changed?.Count ?? 0} 个物体变化，" +
                 $"新建 {Created} 失败 {CreateFailures} 缺Def {MissingDefs}，" +
                 $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，累计 {AppliedFrames} 帧。");
+        }
+    }
+
+    /// <summary>Drops interpolation entries for pawns that are gone, so a long session cannot leak them.</summary>
+    private static void PruneMotions()
+    {
+        if (motions.Count == 0) return;
+        var alive = new HashSet<int>();
+        foreach (var map in Find.Maps)
+            foreach (var pawn in map.mapPawns.AllPawnsSpawned) alive.Add(pawn.thingIDNumber);
+        foreach (var id in motions.Keys.Where(id => !alive.Contains(id)).ToList()) motions.Remove(id);
     }
 
     private static Pawn? FindPawn(int id, int mapId)
@@ -102,11 +123,15 @@ internal static class AuthoritativeReplica
         var thing = FindThing(state.Id);
         if (thing is null) return; // A creation frame that has not arrived yet; the next one carries it.
         var cell = new IntVec3(state.X, 0, state.Z);
-        if (thing.Position != cell && cell.InBounds(thing.Map))
+        var map = thing.Map;
+        if (map is null) return;
+        if (thing.Position != cell && cell.InBounds(map))
         {
-            // Moving a spawned thing must go through the grid, or drawing looks up an empty cell.
+            // DeSpawn clears Thing.Map, so the map and rotation must be captured first; otherwise the
+            // object is respawned onto a null map and every later Print throws in GetSnowDepth.
+            var rotationBefore = thing.Rotation;
             thing.DeSpawn(DestroyMode.Vanish);
-            GenSpawn.Spawn(thing, cell, thing.Map, thing.Rotation, WipeMode.Vanish);
+            GenSpawn.Spawn(thing, cell, map, rotationBefore, WipeMode.Vanish);
         }
         var rotation = new Rot4(state.Rotation);
         if (thing.Rotation != rotation) thing.Rotation = rotation;
@@ -135,7 +160,11 @@ internal static class AuthoritativeReplica
         StatesFailed++;
     }
 
-    private static void RemoveThing(int id) => FindThing(id)?.Destroy(DestroyMode.Vanish);
+    private static void RemoveThing(int id)
+    {
+        Forget(id);
+        FindThing(id)?.Destroy(DestroyMode.Vanish);
+    }
 
     /// <summary>Recreates an object the host created after the snapshot. The definition is looked up by
     /// defName, so a modded building or item arrives as long as both sides run the same mod set.</summary>
@@ -184,10 +213,87 @@ internal static class AuthoritativeReplica
     {
         var pawn = FindPawn(state.Id, state.Map);
         if (pawn is null || !pawn.Spawned) return;
-        var cell = new IntVec3((int)state.X, 0, (int)state.Z);
-        if (pawn.Position != cell) pawn.Position = cell;
+        var target = new Vector3(state.X, 0f, state.Z);
+        var now = Clock.Now;
+        if (motions.TryGetValue(state.Id, out var motion))
+        {
+            // Continue from wherever the portrait currently is, so a new frame never snaps backwards.
+            motion.From = Sample(motion, now);
+            motion.To = target;
+            motion.Start = now;
+        }
+        else
+        {
+            motions[state.Id] = new Motion { From = target, To = target, Start = now };
+        }
+        // Still keep the integer cell in step for selection, targeting and culling.
+        var cell = target.ToIntVec3();
+        if (cell.InBounds(pawn.Map) && pawn.Position != cell) pawn.Position = cell;
         var rotation = new Rot4(state.Rotation);
         if (pawn.Rotation != rotation) pawn.Rotation = rotation;
+    }
+
+    private sealed class Motion
+    {
+        public Vector3 From;
+        public Vector3 To;
+        public float Start;
+    }
+
+    private static readonly Dictionary<int, Motion> motions = [];
+    private static float lastFrameArrival;
+
+    /// <summary>Smoothed time between frames; the interpolation window matches what actually arrives.</summary>
+    private static float frameInterval = 1f / 30f;
+
+    private static Vector3 Sample(Motion motion, float now)
+    {
+        var span = Mathf.Clamp(frameInterval, 0.016f, 0.25f);
+        var t = Mathf.Clamp01((now - motion.Start) / span);
+        if (t >= 1f) return motion.To;
+        // Ease-out so a stop decelerates instead of halting abruptly.
+        var eased = 1f - (1f - t) * (1f - t);
+        return Vector3.Lerp(motion.From, motion.To, eased);
+    }
+
+    /// <summary>Interpolated world position for a replica pawn, or false when this pawn has no motion yet.</summary>
+    internal static bool TryDrawPos(int id, out Vector3 position)
+    {
+        if (motions.TryGetValue(id, out var motion))
+        {
+            position = Sample(motion, Clock.Now);
+            return true;
+        }
+        position = default;
+        return false;
+    }
+
+    internal static void Forget(int id) => motions.Remove(id);
+
+    /// <summary>Pawns currently between two frames. A non-zero count proves rendering is interpolating
+    /// instead of sitting on cell centres.</summary>
+    private static int SmoothCount()
+    {
+        var now = Clock.Now;
+        var count = 0;
+        foreach (var motion in motions.Values)
+            if (now - motion.Start < frameInterval) count++;
+        return count;
+    }
+}
+
+/// <summary>A display replica never runs the pather, so the vanilla draw tracker has no tween to follow
+/// and pawns jump one cell per frame. World positions arrive in frames and are interpolated here instead,
+/// which is what makes walking look continuous.</summary>
+[HarmonyPatch(typeof(Pawn), nameof(Pawn.DrawPos), MethodType.Getter)]
+internal static class ReplicaDrawPosPatch
+{
+    private static bool Prefix(Pawn __instance, ref Vector3 __result)
+    {
+        if (!AuthoritativeReplica.Frozen) return true;
+        if (!AuthoritativeReplica.TryDrawPos(__instance.thingIDNumber, out var position)) return true;
+        __result = position;
+        return false;
     }
 }
 

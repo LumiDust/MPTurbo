@@ -61,6 +61,12 @@ internal static class MultiplayerEntryUpdate
         if (HeadlessRuntime.Active) return;
         RoomConnection.Pump();
         MultiplayerHosting.Update();
+        // Developer aid: a configured server is joined straight from the title screen, so a display
+        // replica needs no menu interaction to attach.
+        var settings = TurboTickMod.Settings;
+        if (settings is { autoConnect: true } && !TurboState.Authority.SessionRequested && !RoomConnection.Busy
+            && RoomConnection.Client?.IsConnected != true)
+            RoomConnection.Connect(settings);
     }
 }
 

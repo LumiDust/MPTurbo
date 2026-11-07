@@ -57,6 +57,9 @@ public static class PatchInstaller
         Try(harmony, "shared-projectile-cadence", typeof(SharedProjectileCadence));
         Try(harmony, "shared-worldobject-cadence", typeof(SharedWorldObjectCadence));
         Try(harmony, "shared-path-requests", typeof(SharedPathRequests));
+        // Display-replica presentation: interpolated motion and a clock that follows the host.
+        Try(harmony, "replica-draw-pos", typeof(ReplicaDrawPosPatch));
+        Try(harmony, "replica-clock", typeof(ReplicaClockPatch));
         if (SimulationDiagnostics.Enabled)
         {
             Try(harmony, "load-filth-trace", typeof(SharedFilthRemovalTracePatch));
