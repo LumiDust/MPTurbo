@@ -448,7 +448,10 @@ internal static class HeadlessRuntime
                 // Find.TickManager dereferences Current.Game in 1.7, so it must not be read without one.
                 paused = Current.Game is null ? (bool?)null : Find.TickManager?.Paused,
                 tickBusy = SharedColony.TickExecuting,
-                slow = Current.Game is null ? (bool?)null : Find.TickManager?.slower?.ForcedNormalSpeed
+                slow = Current.Game is null ? (bool?)null : Find.TickManager?.slower?.ForcedNormalSpeed,
+                // Which of the ForcePaused sources is holding the timeline, so a freeze is diagnosable.
+                longEvent = LongEventHandler.ForcePause,
+                forcePauseWindow = Find.WindowStack?.WindowsForcePause == true
             }, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(path + ".tmp", path, overwrite: true);
         }

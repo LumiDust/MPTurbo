@@ -63,6 +63,8 @@ public static class PatchInstaller
         // A shared timeline must not stop when the window loses focus.
         Try(harmony, "background-run", typeof(BackgroundRunPatch));
         Try(harmony, "background-prefs", typeof(BackgroundPrefsPatch));
+        // Vanilla autosave's LongEventHandler freezes the shared timeline once per in-game day.
+        Try(harmony, "shared-autosave", typeof(SharedAutosaveSkip));
         Try(harmony, "replica-clock", typeof(ReplicaClockPatch));
         if (SimulationDiagnostics.Enabled)
         {
