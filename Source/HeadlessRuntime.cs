@@ -439,7 +439,9 @@ internal static class HeadlessRuntime
                 replicas = server?.DisplayReplicaCount,
                 held = TurboState.Authority.IsHeld, frozen = AuthoritativeReplica.Frozen,
                 holdLocal = HoldLocalTicks, timeSpeed = TurboState.Authority.Current.TimeSpeed,
-                budget = server?.SimulationTickBudgetForDiagnostics
+                budget = server?.SimulationTickBudgetForDiagnostics,
+                paused = Find.TickManager?.Paused, tickBusy = SharedColony.TickExecuting,
+                slow = Find.TickManager?.slower?.ForcedNormalSpeed
             }, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(path + ".tmp", path, overwrite: true);
         }

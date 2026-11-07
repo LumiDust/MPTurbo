@@ -88,6 +88,14 @@ internal static class RoomConnection
         {
             Status = "共享殖民地已开始，正在同步存档…";
             AuthoritativeReplica.OnWorldStarted(session);
+            // The resident already simulates that world. Reloading on every Started message would loop
+            // load -> publish checkpoint -> Started forever and stall the timeline.
+            if (HeadlessRuntime.Active && SharedColony.Session.Phase == Simulation.SharedPhase.Playing
+                && SharedColony.Session.WorldId == manifest.Id)
+            {
+                Status = "已在此世界运行";
+                return;
+            }
             // Even the publisher loads the accepted snapshot; origin does not prove its live state still
             // equals the bytes saved before the asynchronous upload.
             SharedColony.OnWorldStarted(session, manifest);

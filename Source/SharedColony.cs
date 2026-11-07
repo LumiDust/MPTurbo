@@ -120,6 +120,9 @@ public static class SharedColony
 
     internal static void SkipTick() => tickGuard.Cancel();
 
+    /// <summary>Diagnostic: a permit that never completed would reject every later tick.</summary>
+    internal static bool TickExecuting => tickGuard.Busy;
+
     internal static void CancelTick(Exception error)
     {
         tickGuard.Cancel();

@@ -27,4 +27,7 @@ public sealed class SimulationTickGuard(TickBarrier barrier)
     }
 
     public void Cancel() => executing = null;
+
+    /// <summary>True while a permit is outstanding.</summary>
+    public bool Busy => executing is not null;
 }
