@@ -606,7 +606,11 @@ public sealed class DedicatedClient : IAsyncDisposable
                         Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative, started.RoomAuthoritative), started.Manifest!));
                         break;
                     case "Frame":
-                        if (message.Frame is { } frame) Publish(session, () => FrameReceived?.Invoke(frame));
+                        // Frames are coalesced state, not ordered events. Routing each one through the
+                        // notification queue made the queue drain at game-frame rate while frames arrived
+                        // at twice that, so the backlog grew without bound and the replica sat a constant
+                        // ~2000 ticks (33 seconds) behind. Receive is thread-safe and keeps only the newest.
+                        if (message.Frame is { } frame) FrameReceived?.Invoke(frame);
                         break;
                     case "Tick":
                         var tick = message.Tick;
