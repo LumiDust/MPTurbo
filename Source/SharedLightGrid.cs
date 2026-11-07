@@ -11,9 +11,12 @@ namespace TurboTick;
 /// <see cref="GlowGrid.GroundGlowAt"/>), so at the same tick two machines with different frame rates can
 /// read different light: one plant grows, the other rots, and the colony hashes disagree.
 ///
-/// Pinning the refresh to the tick removes the frame rate from the simulation. Every peer recomputes the
-/// same grid from the same lights at the same point in the tick, so the value a plant reads is a function
-/// of the colony and not of how fast the machine draws.
+/// The same is true of the other simulation work in <see cref="Map.MapUpdate"/>: power nets, pathfinding
+/// regions, room rebuilds and lord (group AI) decisions. Those put colonists in the divergence report,
+/// because AI that re-decides a different number of times per second makes different choices.
+///
+/// Both halves are pinned to the tick below, so they are a function of the colony rather than of the
+/// machine's frame rate.
 /// </summary>
 internal static class SharedLightGrid
 {
@@ -24,8 +27,8 @@ internal static class SharedLightGrid
 
     internal static bool Gated => SharedColony.HasSharedWorld && !flushing;
 
-    /// <summary>Called once per shared tick, before anything reads light. Both maps must be refreshed in
-    /// map order so the two peers do the same work in the same sequence.</summary>
+    /// <summary>Called once per shared tick, before anything reads light or asks the AI to decide. Both
+    /// maps are walked in index order so the two peers do the same work in the same sequence.</summary>
     internal static void Flush()
     {
         if (!SharedColony.HasSharedWorld || flushing) return;
@@ -37,9 +40,14 @@ internal static class SharedLightGrid
             {
                 var map = maps[i];
                 if (map is null || map.Disposed) continue;
-                // Sky first: its glow feeds the light grid below.
+                // Sky first: its glow feeds the light grid.
                 map.skyManager?.SkyManagerUpdate();
                 map.glowGrid?.GlowGridUpdate_First();
+                // Structures AI and pathing depend on.
+                map.powerNetManager?.UpdatePowerNetsAndConnections_First();
+                map.regionGrid?.UpdateClean();
+                map.regionAndRoomUpdater?.TryRebuildDirtyRegionsAndRooms();
+                map.lordManager?.LordManagerUpdate();
             }
         }
         finally { flushing = false; }
@@ -61,12 +69,39 @@ internal static class SharedGlowCadence
     private static bool Prefix() => !SharedLightGrid.Gated;
 }
 
+/// <summary>Power nets rebuilt per frame; the result feeds turrets and anything that reads power.</summary>
+[HarmonyPatch(typeof(RimWorld.PowerNetManager), nameof(RimWorld.PowerNetManager.UpdatePowerNetsAndConnections_First))]
+internal static class SharedPowerCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>Pathfinding regions rebuilt per frame; a different rebuild timing yields different paths.</summary>
+[HarmonyPatch(typeof(RegionGrid), nameof(RegionGrid.UpdateClean))]
+internal static class SharedRegionCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>Rooms drive room stats, temperature and territory.</summary>
+[HarmonyPatch(typeof(RegionAndRoomUpdater), nameof(RegionAndRoomUpdater.TryRebuildDirtyRegionsAndRooms))]
+internal static class SharedRoomCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
+/// <summary>Lord decisions are group AI: a different number of updates per second changes what pawns do.</summary>
+[HarmonyPatch(typeof(Verse.AI.Group.LordManager), nameof(Verse.AI.Group.LordManager.LordManagerUpdate))]
+internal static class SharedLordCadence
+{
+    private static bool Prefix() => !SharedLightGrid.Gated;
+}
+
 /// <summary>
 /// Lockstep needs one absolute clock, not merely one tick rate. Vanilla buckets long ticks by
 /// <c>TicksGame % 2000</c> (<see cref="TickList.Tick"/>), so two peers whose <c>TicksGame</c> differ by an
 /// offset run <c>Plant.TickLong</c> on different ticks: growth and rotting then disagree by exactly one
-/// long tick, which is what the colony hash reported. Both peers advance one game tick per shared tick, so
-/// aligning once at the start keeps them aligned.
+/// long tick, which is what the colony hash reported.
 /// </summary>
 internal static class SharedGameClock
 {

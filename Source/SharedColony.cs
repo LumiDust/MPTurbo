@@ -35,7 +35,7 @@ public static class SharedColony
     /// <summary>Checkpoints are published when a joiner asks (CheckpointNeeded) and on shutdown. They are
     /// deliberately not periodic: each one is a synchronous whole-colony save that freezes the shared
     /// simulation for seconds, which showed up in game as movement stalling every few hundred ticks.</summary>
-    private const int CheckpointInterval = int.MaxValue;
+    private const int CheckpointInterval = 6000;
 
     public static void OnWorldStarted(SessionInfo info, SnapshotManifest manifest)
     {
@@ -93,7 +93,7 @@ public static class SharedColony
         // pipeline depth, not a backlog: closing it made every peer simulate about seven times faster than
         // real time, which is what "normal speed runs far too fast" was.
         if (RoomConnection.LockstepRoom) backlog = Math.Max(0, backlog - NetworkProtocol.SimulationLeadTicks);
-        var steps = CatchUpPlan.Steps(backlog);
+        var steps = CatchUpPlan.Steps(backlog, CatchUpPlan.MaxPerFrameShared);
         if (steps == 0) return;
         catchingUp = true;
         var started = Clock.Now;

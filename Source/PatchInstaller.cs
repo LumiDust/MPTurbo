@@ -56,6 +56,10 @@ public static class PatchInstaller
         Try(harmony, "shared-tick-cadence", typeof(SharedTickCadence));
         Try(harmony, "shared-sky-cadence", typeof(SharedSkyCadence));
         Try(harmony, "shared-glow-cadence", typeof(SharedGlowCadence));
+        Try(harmony, "shared-power-cadence", typeof(SharedPowerCadence));
+        Try(harmony, "shared-region-cadence", typeof(SharedRegionCadence));
+        Try(harmony, "shared-room-cadence", typeof(SharedRoomCadence));
+        Try(harmony, "shared-lord-cadence", typeof(SharedLordCadence));
         Try(harmony, "shared-projectile-cadence", typeof(SharedProjectileCadence));
         Try(harmony, "shared-worldobject-cadence", typeof(SharedWorldObjectCadence));
         Try(harmony, "shared-path-requests", typeof(SharedPathRequests));

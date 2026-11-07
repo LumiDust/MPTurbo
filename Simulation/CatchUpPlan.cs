@@ -10,6 +10,12 @@ public static class CatchUpPlan
     /// <summary>Upper bound per frame; guards against a huge gap freezing the client.</summary>
     public const int MaxPerFrame = 8;
 
+    /// <summary>Bound while a shared world is running. Replaying a gap is necessary, but at eight extra
+    /// ticks per frame the colony visibly fast-forwards - measured at 1211 t/s against a 60 target - and a
+    /// player reads that as the game having broken, not as catching up. Three times real time is fast
+    /// enough to close a normal gap without looking wrong.</summary>
+    public const int MaxPerFrameShared = 2;
+
     /// <summary>
     /// Steps to run this frame. Zero means "let the normal tick happen".
     /// The budget scales with the gap but never exceeds <paramref name="maxPerFrame"/>.
