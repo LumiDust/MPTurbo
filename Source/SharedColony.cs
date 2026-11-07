@@ -32,7 +32,10 @@ public static class SharedColony
     }
 
     private static int lastCheckpointTick;
-    private const int CheckpointInterval = 3000;
+    /// <summary>Checkpoints are published when a joiner asks (CheckpointNeeded) and on shutdown. They are
+    /// deliberately not periodic: each one is a synchronous whole-colony save that freezes the shared
+    /// simulation for seconds, which showed up in game as movement stalling every few hundred ticks.</summary>
+    private const int CheckpointInterval = int.MaxValue;
 
     public static void OnWorldStarted(SessionInfo info, SnapshotManifest manifest)
     {
@@ -134,6 +137,10 @@ public static class SharedColony
     {
         if (!Gating) return;
         ApplyDue();
+        // Frames are published from the tick, not from the render loop. The headless loop runs at a few
+        // hertz, so driving publication from it delivered about five frames per second while the colony
+        // advanced sixty ticks, which the client could only show as move-pause-move.
+        if (HeadlessRuntime.Active) HeadlessRuntime.PublishFrame();
         if (Session.Barrier.AppliedTick % HashEvery == 0) ReportHash();
         if (RoomConnection.IsCheckpointOwner && !HeadlessRuntime.StopRequested
             && Session.Barrier.AppliedTick - lastCheckpointTick >= CheckpointInterval)
@@ -143,7 +150,10 @@ public static class SharedColony
         }
     }
 
-    /// <summary>Periodic canonical hash so the server can prove all peers still simulate the same colony.</summary>
+    /// <summary>Periodic canonical hash so the server can prove all peers still simulate the same colony.
+    /// In an authoritative room exactly one process simulates, so there is nothing to compare against and
+    /// the traversal is skipped: it walks every pawn, thing and designation on the main thread and showed
+    /// up in game as the simulation stalling roughly once per second.</summary>
     private static int lastHashedTick = -1;
     private static bool reportingArmed;
     // Diagnostic override: a divergence between two samples is otherwise reported only as a bucket.
@@ -164,6 +174,9 @@ public static class SharedColony
         if (!reportingArmed || tick <= lastHashedTick) return;
         // A display replica never simulated that tick, so its hash would only look like a desync.
         if (AuthoritativeReplica.Frozen) return;
+        // Only one simulator exists in an authoritative room, so a canonical hash has nothing to compare
+        // against and must not pay for a full colony traversal on the shared timeline.
+        if (RoomConnection.AuthoritativeRoom) return;
         lastHashedTick = tick;
         try
         {

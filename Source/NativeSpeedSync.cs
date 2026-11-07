@@ -67,10 +67,17 @@ public static class NativeSpeedSync
         if (!TurboState.Authority.SessionConnected || Current.ProgramState != ProgramState.Playing || Current.Game is null
             || Scribe.mode != LoadSaveMode.Inactive || Find.TickManager is not { } manager) return;
         var policy = TurboState.Authority.Current;
-        if (ReferenceEquals(appliedManager, manager) && appliedRevision == policy.Revision) return;
+        var selected = (TimeSpeed)policy.TimeSpeed;
+        // Compare the live speed, never just the revision. A revision is applied once, but the manager can
+        // be paused afterwards by a load, a long event or a local dialog; keying on the revision alone left
+        // the resident frozen at a checkpoint with the server policy asking for normal speed.
+        if (ReferenceEquals(appliedManager, manager) && manager.CurTimeSpeed == selected)
+        {
+            appliedRevision = policy.Revision;
+            return;
+        }
         appliedManager = manager;
         appliedRevision = policy.Revision;
-        var selected = (TimeSpeed)policy.TimeSpeed;
         if (manager.CurTimeSpeed == selected) return;
         if (selected == TimeSpeed.Paused && manager.CurTimeSpeed != TimeSpeed.Paused)
             manager.prePauseTimeSpeed = manager.CurTimeSpeed;

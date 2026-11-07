@@ -190,7 +190,7 @@ internal static class HeadlessRuntime
 
     private static bool baselineReady;
 
-    private static void PublishFrame()
+    internal static void PublishFrame()
     {
         if (server is null || !SharedColony.Gating) return;
         var tick = Find.TickManager?.TicksGame ?? -1;

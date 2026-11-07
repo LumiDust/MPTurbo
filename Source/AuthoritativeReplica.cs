@@ -62,30 +62,49 @@ internal static class AuthoritativeReplica
         var frame = Interlocked.Exchange(ref pending, null);
         if (frame is null) return;
         if (frame.Tick <= LastFrameTick) return;
-        var arrival = Clock.Now;
-        if (lastFrameArrival > 0f)
+        var arrival = Clock.Now;        if (lastFrameArrival > 0f)
         {
             var measured = arrival - lastFrameArrival;
             if (measured > 0.001f && measured < 0.5f) frameInterval = frameInterval * 0.8f + measured * 0.2f;
+            // A gap far longer than the smoothing window is a visible hitch: the timeline stopped.
+            if (measured > 0.25f) { hitchCount++; worstGap = Math.Max(worstGap, measured); }
         }
         lastFrameArrival = arrival;
         LastFrameTick = frame.Tick;
         AppliedFrames++;
         SharedColony.Session.Barrier.Observe(frame.Tick);
         foreach (var state in frame.Pawns) ApplyPawn(state);
+        // Bound the per-frame object work by wall time: a burst of changes must never block the render
+        // thread long enough for Windows to declare the window hung. Leftovers are dropped, because the
+        // next frame carries newer state for the same objects anyway.
+        var deadline = Clock.Now + ObjectBudgetSeconds;
         if (frame.Changed is { Count: > 0 } changed)
-            foreach (var state in changed) ApplyThing(state);
+            foreach (var state in changed)
+            {
+                if (Clock.Now > deadline) { DroppedWork++; break; }
+                ApplyThing(state);
+            }
         if (frame.Removed is { Count: > 0 } removed)
-            foreach (var id in removed) RemoveThing(id);
+            foreach (var id in removed)
+            {
+                if (Clock.Now > deadline) { DroppedWork++; break; }
+                RemoveThing(id);
+            }
         if (frame.Created is { Count: > 0 } created)
-            foreach (var state in created) CreateThing(state);
+            foreach (var state in created)
+            {
+                if (Clock.Now > deadline) { DroppedWork++; break; }
+                CreateThing(state);
+            }
         if (AppliedFrames % 600 == 0)
         {
             PruneMotions();
             Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色（滑动中 {SmoothCount()}），{frame.Changed?.Count ?? 0} 个物体变化，" +
                 $"新建 {Created} 失败 {CreateFailures} 缺Def {MissingDefs}，" +
                 $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，" +
-                $"失去地图 {DetachCount()}，累计 {AppliedFrames} 帧。");
+                $"失去地图 {DetachCount()}，帧间隔 最差 {worstGap:0.00}s / 停顿 {hitchCount} 次，超预算丢弃 {DroppedWork}，累计 {AppliedFrames} 帧。");
+            hitchCount = 0;
+            worstGap = 0f;
         }
     }
 
@@ -288,6 +307,14 @@ internal static class AuthoritativeReplica
 
     private static readonly Dictionary<int, Motion> motions = [];
     private static float lastFrameArrival;
+    private static int hitchCount;
+    private static float worstGap;
+    /// <summary>Wall-clock budget for object updates in one rendered frame. Each update is a Scribe round
+    /// trip, and enough of them in one frame blocks rendering until Windows calls the window hung.</summary>
+    private static readonly float ObjectBudgetSeconds =
+        float.TryParse(Environment.GetEnvironmentVariable("TURBOTICK_OBJECT_BUDGET_MS"), out var ms) && ms > 0
+            ? ms / 1000f : 0.006f;
+    private static int DroppedWork;
 
     /// <summary>Smoothed time between frames; the interpolation window matches what actually arrives.</summary>
     private static float frameInterval = 1f / 30f;

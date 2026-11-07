@@ -55,6 +55,9 @@ internal sealed record WireMessage
     public AuthoritativeFrame? Frame { get; init; }
     /// <summary>Present on Started: joining peers are display replicas, not simulators.</summary>
     public bool Authoritative { get; init; }
+    /// <summary>Present on Started: the room itself runs one authoritative simulator, so replicas apply
+    /// frames and no peer performs cross-peer hash comparison.</summary>
+    public bool RoomAuthoritative { get; init; }
 
     internal static WireMessage Error(string code, string message, long requestId = 0, bool fatal = false) =>
         new() { Type = "Error", Code = code, Message = message, RequestId = requestId, Fatal = fatal };

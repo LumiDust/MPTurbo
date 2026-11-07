@@ -60,6 +60,9 @@ public static class PatchInstaller
         // Display-replica presentation: interpolated motion and a clock that follows the host.
         Try(harmony, "replica-draw-pos", typeof(ReplicaDrawPosPatch));
         Try(harmony, "replica-plant-guard", typeof(ReplicaPlantPrintGuard));
+        // A shared timeline must not stop when the window loses focus.
+        Try(harmony, "background-run", typeof(BackgroundRunPatch));
+        Try(harmony, "background-prefs", typeof(BackgroundPrefsPatch));
         Try(harmony, "replica-clock", typeof(ReplicaClockPatch));
         if (SimulationDiagnostics.Enabled)
         {

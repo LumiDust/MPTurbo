@@ -87,6 +87,7 @@ internal static class RoomConnection
         socket.WorldStarted += (session, manifest) => PostWorld(() =>
         {
             Status = "共享殖民地已开始，正在同步存档…";
+            AuthoritativeRoom = session.RoomAuthoritative;
             AuthoritativeReplica.OnWorldStarted(session);
             // The resident already simulates that world. Reloading on every Started message would loop
             // load -> publish checkpoint -> Started forever and stall the timeline.
@@ -330,6 +331,10 @@ internal static class RoomConnection
 
     public static bool IsCheckpointOwner => client?.IsCheckpointOwner == true;
 
+    /// <summary>True when the server owns the simulation. Replicas follow frames and every peer is frozen,
+    /// so cross-peer hash comparison has nothing to compare.</summary>
+    public static bool AuthoritativeRoom { get; private set; }
+
     /// <summary>Desync recovery: drop the session and join again, which reloads the checkpoint and replays the delta.</summary>
     public static void ReconnectFromFault()
     {
@@ -432,6 +437,7 @@ internal static class RoomConnection
     public static void Leave()
     {
         SessionChanging?.Invoke();
+        AuthoritativeRoom = false;
         publishOnConnect = false;
         publishedOnce = false;
         checkpointRequested = false;

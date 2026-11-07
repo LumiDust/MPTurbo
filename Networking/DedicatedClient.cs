@@ -603,7 +603,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
-                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative), started.Manifest!));
+                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative, started.RoomAuthoritative), started.Manifest!));
                         break;
                     case "Frame":
                         if (message.Frame is { } frame) Publish(session, () => FrameReceived?.Invoke(frame));

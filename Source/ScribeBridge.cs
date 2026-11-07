@@ -48,16 +48,17 @@ internal static class ScribeBridge
         var root = document.DocumentElement?.FirstChild;
         if (root is null) return false;
         // The fragment carries the sender's def, id, map and position. Applying those to a live object
-        // assigns Map and Position directly, bypassing the thing grid: the object stays in the draw list
-        // with a null map and Plant.Print throws in GridsUtility.GetSnowDepth. Deleting the nodes is also
-        // wrong, because ScribeExtractor.ValueFromNode(null, default) then writes IntVec3.Invalid and
-        // map = -1. The identity nodes are overwritten with the receiver's own serialised values instead,
-        // which keeps the round trip consistent for every field type.
+        // assigns Map and Position directly, bypassing the thing grid, so the object would keep drawing
+        // with a null map and Plant.Print would throw in GridsUtility.GetSnowDepth. Identity is restored
+        // after the load instead of rewritten beforehand: serialising the receiver on every load doubled
+        // the Scribe work per object per frame and showed up as multi-second frame hitches.
         var thing = value as Thing;
-        if (thing is not null) KeepReceiverIdentity(value, root);
+        // Cheap field reads only: no serialisation on this path.
         var mapBefore = thing?.Map;
         var positionBefore = thing?.Position ?? IntVec3.Invalid;
         var rotationBefore = thing?.Rotation ?? Rot4.North;
+        var defBefore = thing?.def;
+        var idBefore = thing?.thingIDNumber ?? -1;
         var loader = Scribe.loader;
         var previousParent = loader.curXmlParent;
         var previousPath = loader.curPathRelToParent;
@@ -85,7 +86,12 @@ internal static class ScribeBridge
             loader.curXmlParent = previousParent;
             loader.curPathRelToParent = previousPath;
             Scribe.mode = LoadSaveMode.Inactive;
-            if (thing is not null) RestoreSpawn(thing, mapBefore, positionBefore, rotationBefore);
+            if (thing is not null)
+            {
+                if (defBefore is not null && thing.def is null) thing.def = defBefore;
+                if (idBefore >= 0 && thing.thingIDNumber != idBefore) thing.thingIDNumber = idBefore;
+                RestoreSpawn(thing, mapBefore, positionBefore, rotationBefore);
+            }
         }
     }
 
@@ -99,30 +105,6 @@ internal static class ScribeBridge
         if (thing.Spawned) thing.DeSpawn(DestroyMode.Vanish);
         if (!position.IsValid || !position.InBounds(map)) return;
         GenSpawn.Spawn(thing, position, map, rotation, WipeMode.VanishOrMoveAside);
-    }
-
-    /// <summary>Fields that locate the object. They must describe the receiver, never the sender.</summary>
-    private static readonly string[] IdentityFields = ["def", "id", "pos", "map", "rot"];
-
-    /// <summary>Replaces the locating nodes in the incoming fragment with the receiver's own serialised
-    /// values, so Scribe reads back exactly what the live object already is.</summary>
-    private static void KeepReceiverIdentity(IExposable value, XmlNode target)
-    {
-        var own = Save(value);
-        if (string.IsNullOrEmpty(own)) return;
-        var document = new XmlDocument();
-        try { document.LoadXml("<r>" + own + "</r>"); }
-        catch (XmlException) { return; }
-        var source = document.DocumentElement?.FirstChild;
-        if (source is null) return;
-        foreach (var name in IdentityFields)
-        {
-            var from = source[name];
-            if (from is null) continue;
-            var to = target[name];
-            if (to is null) continue;
-            if (to is XmlElement element) element.InnerText = from.InnerText;
-        }
     }
 
     /// <summary>Runs an optional post-load hook by reflection: 1.7 exposes several unrelated PostLoad

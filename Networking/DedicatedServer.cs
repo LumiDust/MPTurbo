@@ -76,7 +76,7 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         get
         {
             var world = WorldManifest;
-            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick, _options.Authoritative);
+            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick, _options.Authoritative, _options.Authoritative);
         }
     }
 
@@ -724,7 +724,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             foreach (var recipient in _peers.Values)
                 if (recipient.Joined)
                     recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world, Seed = seed,
-                        Authoritative = _options.Authoritative && !recipient.IsSimulation });
+                        Authoritative = _options.Authoritative && !recipient.IsSimulation,
+                        RoomAuthoritative = _options.Authoritative });
             peer.Queue(new WireMessage { Type = "StartedAccepted", RequestId = message.RequestId, Epoch = epoch });
             await SaveCurrentStateLockedAsync(peer.Token).ConfigureAwait(false);
         }
@@ -883,7 +884,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed),
             // Only a real player peer becomes a display replica. The resident simulation connection
             // must keep simulating, otherwise the authoritative host would freeze itself.
-            Authoritative = _options.Authoritative && !peer.IsSimulation
+            Authoritative = _options.Authoritative && !peer.IsSimulation,
+            RoomAuthoritative = _options.Authoritative
         });
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];

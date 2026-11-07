@@ -86,7 +86,7 @@ public static class PresenceRules
 
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
 public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0,
-    bool Authoritative = false);
+    bool Authoritative = false, bool RoomAuthoritative = false);
 
 /// <summary>One pawn exactly as the authoritative host simulates it. Display replicas apply this instead
 /// of running their own simulation, so they cannot diverge.</summary>
