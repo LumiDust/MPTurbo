@@ -86,10 +86,8 @@ public static class PresenceRules
 
 /// <summary>Session identity published at start; the seed aligns random streams across peers.</summary>
 public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId, int SnapshotTick = 0,
-    bool Authoritative = false, bool RoomAuthoritative = false);
+    bool Authoritative = false, bool RoomAuthoritative = false, bool Lockstep = false);
 
-/// <summary>One pawn exactly as the authoritative host simulates it. Display replicas apply this instead
-/// of running their own simulation, so they cannot diverge.</summary>
 /// <summary>One pawn exactly as the authoritative host simulates it. Display replicas apply this instead
 /// of simulating. A predictive peer also needs the current job and its targets: two simulations that only
 /// agree on position still walk to different places, because the AI underneath them chose differently.</summary>
@@ -127,6 +125,10 @@ public sealed record ServerOptions(string Address = "127.0.0.1", int Port = 3057
 
     /// <summary>The resident is the only simulator; joining clients are display replicas.</summary>
     public bool Authoritative { get; init; } = false;
+
+    /// <summary>Every peer simulates and the timeline is gated by the slowest one. The server only orders
+    /// commands and paces ticks; it never owns the colony state.</summary>
+    public bool Lockstep { get; init; } = false;
 
     // Options are routinely printed by hosts; never include the credential in the generated record text.
     public override string ToString() => $"ServerOptions {{ Address = {Address}, Port = {Port}, AdminEnabled = {!string.IsNullOrEmpty(AdminPassword)} }}";

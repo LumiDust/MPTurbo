@@ -88,6 +88,7 @@ internal static class RoomConnection
         {
             Status = "共享殖民地已开始，正在同步存档…";
             AuthoritativeRoom = session.RoomAuthoritative;
+            LockstepRoom = session.Lockstep;
             AuthoritativeReplica.OnWorldStarted(session);
             // The resident already simulates that world. Reloading on every Started message would loop
             // load -> publish checkpoint -> Started forever and stall the timeline.
@@ -279,6 +280,20 @@ internal static class RoomConnection
         }));
     }
 
+    /// <summary>Lockstep pacing: how far this peer has actually simulated. Sent fire-and-forget because the
+    /// timeline stalls if it is late, so it must never queue behind a slow round trip.</summary>
+    public static void ReportProgress(int tick)
+    {
+        if (client?.IsConnected != true) return;
+        var socket = client;
+        var token = lifetime?.Token ?? CancellationToken.None;
+        _ = Task.Run(async () =>
+        {
+            try { await socket.ReportProgressAsync(tick, token).ConfigureAwait(false); }
+            catch (Exception) { /* a dropped progress report only costs one tick of pacing */ }
+        }, token);
+    }
+
     public static Task ReportHash(int tick, string sha256, IReadOnlyList<string>? categories = null)
     {
         if (client?.IsConnected != true) return Task.CompletedTask;
@@ -334,6 +349,10 @@ internal static class RoomConnection
     /// <summary>True when the server owns the simulation. Replicas follow frames and every peer is frozen,
     /// so cross-peer hash comparison has nothing to compare.</summary>
     public static bool AuthoritativeRoom { get; private set; }
+
+    /// <summary>Every peer simulates. The server paces the timeline from the slowest report, so hashes are
+    /// comparable again and progress must be reported each tick.</summary>
+    public static bool LockstepRoom { get; private set; }
 
     /// <summary>Desync recovery: drop the session and join again, which reloads the checkpoint and replays the delta.</summary>
     public static void ReconnectFromFault()
@@ -438,6 +457,7 @@ internal static class RoomConnection
     {
         SessionChanging?.Invoke();
         AuthoritativeRoom = false;
+        LockstepRoom = false;
         publishOnConnect = false;
         publishedOnce = false;
         checkpointRequested = false;

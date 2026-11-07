@@ -59,6 +59,9 @@ internal sealed record WireMessage
     /// frames and no peer performs cross-peer hash comparison.</summary>
     public bool RoomAuthoritative { get; init; }
 
+    /// <summary>Every peer simulates and the server only orders commands and paces ticks.</summary>
+    public bool Lockstep { get; init; }
+
     internal static WireMessage Error(string code, string message, long requestId = 0, bool fatal = false) =>
         new() { Type = "Error", Code = code, Message = message, RequestId = requestId, Fatal = fatal };
 }

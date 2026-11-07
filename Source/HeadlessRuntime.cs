@@ -92,7 +92,8 @@ internal static class HeadlessRuntime
                 {
                     var hello = CompatibilityManifest.Build(inputs, "DedicatedSimulation", export, CancellationToken.None);
                     candidate = new DedicatedServer(new ServerOptions(host, port, dataDirectory, hello.GameVersion,
-                        hello.ModHash, !controllerOnly, AdminPassword: adminPassword) { RequireSimulation = true, Authoritative = true });
+                        hello.ModHash, !controllerOnly, AdminPassword: adminPassword)
+                    { RequireSimulation = true, Authoritative = !Lockstep, Lockstep = Lockstep });
                     await candidate.StartAsync().ConfigureAwait(false);
                     // A persisted room from another modpack must not be silently overwritten or simulated.
                     if (candidate.LockedGameVersion != hello.GameVersion || candidate.LockedModHash != hello.ModHash)
@@ -194,9 +195,14 @@ internal static class HeadlessRuntime
 
     private static bool baselineReady;
 
+    /// <summary>Every peer simulates; the server paces ticks and orders commands. Off unless asked for,
+    /// because the authoritative display path is the one that has been through acceptance.</summary>
+    internal static readonly bool Lockstep =
+        string.Equals(Environment.GetEnvironmentVariable("TURBOTICK_LOCKSTEP"), "1", StringComparison.Ordinal);
+
     internal static void PublishFrame()
     {
-        if (server is null || !SharedColony.Gating) return;
+        if (server is null || !SharedColony.Gating || Lockstep) return;
         var tick = Find.TickManager?.TicksGame ?? -1;
         if (tick <= lastPublishedTick || tick % FrameInterval != 0) return;
         lastPublishedTick = tick;
@@ -451,6 +457,7 @@ internal static class HeadlessRuntime
                 held = TurboState.Authority.IsHeld, frozen = AuthoritativeReplica.Frozen,
                 holdLocal = HoldLocalTicks, timeSpeed = TurboState.Authority.Current.TimeSpeed,
                 budget = server?.SimulationTickBudgetForDiagnostics,
+                lockstep = server?.LockstepDiagnostics,
                 // Find.TickManager dereferences Current.Game in 1.7, so it must not be read without one.
                 paused = Current.Game is null ? (bool?)null : Find.TickManager?.Paused,
                 tickBusy = SharedColony.TickExecuting,

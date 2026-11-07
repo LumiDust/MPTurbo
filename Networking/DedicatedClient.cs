@@ -408,6 +408,15 @@ public sealed class DedicatedClient : IAsyncDisposable
         finally { Volatile.Write(ref session.PresenceWriteInFlight, 0); }
     }
 
+    /// <summary>Lockstep pacing: tells the server how far this peer has actually simulated. Without it the
+    /// timeline would run at the fastest machine's speed and the slowest would fall behind forever.</summary>
+    public async Task ReportProgressAsync(int tick, CancellationToken ct = default)
+    {
+        var session = ConnectedSession();
+        await session.Connection.WriteAsync(new WireMessage { Type = "ReportProgress", Tick = tick }, session.Token).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+    }
+
     /// <summary>Reports the local state hash for a tick so the server can detect divergence.</summary>
     public async Task ReportHashAsync(int tick, string sha256, IReadOnlyList<string>? categories = null, CancellationToken ct = default)
     {
@@ -603,7 +612,7 @@ public sealed class DedicatedClient : IAsyncDisposable
                         if (message.Manifest is null) throw new NetworkException("InvalidStart", "The shared colony start is incomplete.");
                         Validation.Manifest(message.Manifest);
                         var started = message;
-                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative, started.RoomAuthoritative), started.Manifest!));
+                        Publish(session, () => WorldStarted?.Invoke(new SessionInfo(started.Epoch, started.Tick, started.Seed, started.WorldId ?? "", started.SnapshotTick, started.Authoritative, started.RoomAuthoritative, started.Lockstep), started.Manifest!));
                         break;
                     case "Frame":
                         // Frames are coalesced state, not ordered events. Routing each one through the

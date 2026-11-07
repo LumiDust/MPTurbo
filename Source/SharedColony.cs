@@ -144,6 +144,9 @@ public static class SharedColony
         // hertz, so driving publication from it delivered about five frames per second while the colony
         // advanced sixty ticks, which the client could only show as move-pause-move.
         if (HeadlessRuntime.Active) HeadlessRuntime.PublishFrame();
+        // Lockstep keeps the server's timeline behind the slowest simulator, which only works if every
+        // peer says how far it got.
+        if (RoomConnection.LockstepRoom) RoomConnection.ReportProgress(Session.Barrier.AppliedTick);
         if (Session.Barrier.AppliedTick % HashEvery == 0) ReportHash();
         if (RoomConnection.IsCheckpointOwner && !HeadlessRuntime.StopRequested
             && Session.Barrier.AppliedTick - lastCheckpointTick >= CheckpointInterval)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -73,12 +74,57 @@ public sealed partial class DedicatedServer
 
     private int SimulationTickBudget()
     {
+        // Lockstep: every peer simulates and the slowest one paces the timeline. The resident process, when
+        // present, is just another peer that never disconnects.
+        if (_options.Lockstep) return LockstepTickBudget();
         var peer = Volatile.Read(ref _simulationPeer);
         var progress = Volatile.Read(ref _simulationProgress);
         if (peer is null || !peer.Joined || peer.Token.IsCancellationRequested || peer.RoomGeneration != _roomGeneration ||
             progress is null || !ReferenceEquals(progress.Peer, peer) || !progress.Ready || progress.Epoch != Epoch)
             return 0;
         return (int)Math.Clamp((long)progress.AppliedTick + SimulationLeadTicks - Tick, 0L, int.MaxValue);
+    }
+
+    /// <summary>Applied tick reported by each joined peer. A room with nobody able to simulate must not
+    /// advance, so an empty roster yields zero rather than a free-running clock.</summary>
+    private readonly ConcurrentDictionary<long, int> _peerAppliedTick = new();
+
+    private void ReportPeerProgress(Peer peer, int appliedTick)
+    {
+        if (appliedTick >= 0) _peerAppliedTick[peer.Id] = appliedTick;
+    }
+
+    private int LockstepTickBudget()
+    {
+        var slowest = int.MaxValue;
+        var any = false;
+        foreach (var peer in _peers.Values)
+        {
+            if (!peer.Joined || peer.Token.IsCancellationRequested || peer.RoomGeneration != _roomGeneration) continue;
+            if (!_peerAppliedTick.TryGetValue(peer.Id, out var applied)) return 0; // a peer that never reported holds the line
+            any = true;
+            if (applied < slowest) slowest = applied;
+        }
+        if (!any) return 0;
+        return (int)Math.Clamp((long)slowest + SimulationLeadTicks - Tick, 0L, int.MaxValue);
+    }
+
+    /// <summary>Why the lockstep timeline is or is not moving. Without this a stall is only visible as a
+    /// stopped tick with no way to tell which peer is holding it.</summary>
+    public string LockstepDiagnostics
+    {
+        get
+        {
+            if (!_options.Lockstep) return "off";
+            var parts = new List<string>();
+            foreach (var peer in _peers.Values)
+            {
+                if (!peer.Joined) continue;
+                var reported = _peerAppliedTick.TryGetValue(peer.Id, out var applied) ? applied.ToString() : "none";
+                parts.Add($"{(peer.IsSimulation ? "sim" : "player")}#{peer.Id}={reported}");
+            }
+            return $"tick={Tick} [{string.Join(", ", parts)}]";
+        }
     }
 
     /// <summary>Diagnostic mirror of the budget that gates the published timeline.</summary>

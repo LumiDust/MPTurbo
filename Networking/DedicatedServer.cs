@@ -76,7 +76,7 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         get
         {
             var world = WorldManifest;
-            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick, _options.Authoritative, _options.Authoritative);
+            return world is null || !GameRunning ? null : new SessionInfo(Epoch, Tick, Volatile.Read(ref _seed), world.Id, CheckpointTick, _options.Authoritative, _options.Authoritative, _options.Lockstep);
         }
     }
 
@@ -305,6 +305,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             await Task.WhenAll(writer, heartbeat).ConfigureAwait(false);
             await LeaveAsync(peer).ConfigureAwait(false);
             _peers.TryRemove(peer.Id, out _);
+            // A departed peer must not keep holding the lockstep timeline at its last reported tick.
+            _peerAppliedTick.TryRemove(peer.Id, out _);
             peer.DisposeToken();
         }
     }
@@ -353,6 +355,9 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 PlayerId = peer.Id, Players = CapturePlayers(peer), Epoch = Epoch
             });
             peer.Joined = true; // No other broadcast can overtake Welcome on this peer's FIFO.
+            // Lockstep must not wait for a report that predates the join: seed it at the current tick so the
+            // timeline only stalls on peers that actually fell behind.
+            if (_options.Lockstep) _peerAppliedTick[peer.Id] = Tick;
             if (isSimulation) BroadcastRoles();
             else BroadcastPlayers();
             // Do not replay pointer history to a joiner. Each peer sends a one-second keepalive.
@@ -448,6 +453,9 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 return;
             case "ReportHash":
                 await WithRoomGateAsync(peer, () => ReportHash(peer, message)).ConfigureAwait(false);
+                return;
+            case "ReportProgress":
+                if (peer.Joined && message.Tick >= 0) ReportPeerProgress(peer, message.Tick);
                 return;
             default: throw new NetworkException("UnknownMessage", "This message is not supported.");
         }
@@ -725,7 +733,7 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 if (recipient.Joined)
                     recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world, Seed = seed,
                         Authoritative = _options.Authoritative && !recipient.IsSimulation,
-                        RoomAuthoritative = _options.Authoritative });
+                        RoomAuthoritative = _options.Authoritative, Lockstep = _options.Lockstep });
             peer.Queue(new WireMessage { Type = "StartedAccepted", RequestId = message.RequestId, Epoch = epoch });
             await SaveCurrentStateLockedAsync(peer.Token).ConfigureAwait(false);
         }
@@ -885,7 +893,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             // Only a real player peer becomes a display replica. The resident simulation connection
             // must keep simulating, otherwise the authoritative host would freeze itself.
             Authoritative = _options.Authoritative && !peer.IsSimulation,
-            RoomAuthoritative = _options.Authoritative
+            RoomAuthoritative = _options.Authoritative,
+            Lockstep = _options.Lockstep
         });
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];
@@ -921,7 +930,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                     }
                     if (!GameRunning) continue;
                     ExpirePendingJoiners();
-                    var budget = _options.RequireSimulation ? SimulationTickBudget() : int.MaxValue;
+                    var budget = _options.Lockstep ? LockstepTickBudget()
+                        : _options.RequireSimulation ? SimulationTickBudget() : int.MaxValue;
                     // Always consume this frame's clock output before clamping it. Blocked or capped time
                     // creates no debt for a later progress sample; a closed gate also resets fractions.
                     var count = clock.Advance(elapsed, budget == 0 ? 0 : CurrentPolicy.TimeSpeed);
