@@ -59,11 +59,19 @@ internal static class SimulationDiagnostics
             {
                 if (thing.def.category is ThingCategory.Mote or ThingCategory.Ethereal) continue;
                 var pawn = thing as Pawn;
+                // A plant's HP is the one thing about it the hash covers, and it is only ever changed by
+                // rotting. Growth, age, unlit ticks and the light reading are what decide whether rotting
+                // starts, so they have to travel with the row to explain a mismatch.
+                var plant = thing as RimWorld.Plant;
                 rows.Add(new
                 {
                     id = thing.thingIDNumber, def = thing.def.defName, map = map.Index,
                     x = thing.Position.x, z = thing.Position.z, hp = thing.HitPoints,
                     job = pawn?.CurJobDef?.defName, health = pawn?.health?.summaryHealth?.SummaryHealthPercent,
+                    growth = plant?.Growth, age = plant?.Age,
+                    called = plant is null ? (bool?)null : plant.IsCrop,
+                    light = plant is null ? (float?)null : map.glowGrid.GroundGlowAt(thing.Position),
+                    dying = plant?.Dying,
                     needs = pawn?.needs?.AllNeeds?.Select(n => new { def = n.def.defName, level = n.CurLevel }).ToList(),
                     hediffs = pawn?.health?.hediffSet?.hediffs?
                         .Select(h => new { def = h.def.defName, part = h.Part?.def?.defName, severity = h.Severity }).ToList()

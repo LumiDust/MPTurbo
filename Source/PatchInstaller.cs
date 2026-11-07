@@ -54,6 +54,8 @@ public static class PatchInstaller
         Try(harmony, "wander-dest", typeof(RandomWanderDestDeterministicPatch));
         Try(harmony, "effect-isolation", typeof(TurboEffectIsolation));
         Try(harmony, "shared-tick-cadence", typeof(SharedTickCadence));
+        Try(harmony, "shared-sky-cadence", typeof(SharedSkyCadence));
+        Try(harmony, "shared-glow-cadence", typeof(SharedGlowCadence));
         Try(harmony, "shared-projectile-cadence", typeof(SharedProjectileCadence));
         Try(harmony, "shared-worldobject-cadence", typeof(SharedWorldObjectCadence));
         Try(harmony, "shared-path-requests", typeof(SharedPathRequests));
@@ -110,6 +112,8 @@ public static class PatchInstaller
             && status.GetValueOrDefault("wander-dest")
             && status.GetValueOrDefault("effect-isolation")
             && status.GetValueOrDefault("shared-tick-cadence")
+            && status.GetValueOrDefault("shared-sky-cadence")
+            && status.GetValueOrDefault("shared-glow-cadence")
             && status.GetValueOrDefault("shared-projectile-cadence")
             && status.GetValueOrDefault("shared-worldobject-cadence")
             && status.GetValueOrDefault("shared-path-requests")

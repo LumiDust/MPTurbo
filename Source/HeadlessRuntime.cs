@@ -77,7 +77,10 @@ internal static class HeadlessRuntime
                     throw new IOException("Invalid management password file.");
             }
             else adminPassword = Environment.GetEnvironmentVariable("TURBOTICK_ADMIN_PASSWORD");
-            TurboTickMod.Settings.autoRecover = false; // Resident faults hold the authoritative timeline for diagnosis.
+            // Lockstep: one diverged peer must reload the checkpoint and rejoin like anyone else, otherwise a
+            // single differing plant stops the whole room. Authoritative rooms keep holding for diagnosis,
+            // because there the resident is the only copy of the truth.
+            TurboTickMod.Settings.autoRecover = Lockstep;
             Waylith.EngineApplication.Instance.OnShutdown += Shutdown;
             Console.CancelKeyPress += OnCancel;
             if (!OperatingSystem.IsWindows())

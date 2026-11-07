@@ -313,6 +313,9 @@ public static class SharedColony
             try { SharedPathWarmup.CompleteLoadedRequests(Find.Maps); }
             catch (Exception error) { OnWorldLoadFailed(error.Message); return; }
             if (!Session.TryFinishLoading(generation)) return;
+            // One absolute clock, not just one rate: vanilla buckets long ticks by TicksGame % 2000, so an
+            // offset between peers runs Plant.TickLong on different ticks and growth diverges.
+            SharedGameClock.Align(Session.Barrier.AppliedTick);
             loadPending = false;
             expectedSaveName = null;
             reportingArmed = true;
@@ -390,6 +393,8 @@ internal static class TickApplyPatch
         if (!SharedColony.HasSharedWorld) return true;
         var audit = SimulationDiagnostics.Before(__instance);
         if (!SharedColony.TryBeginTick(__instance, out var permit)) return false;
+        // Light must be a function of the tick, not of the frame rate, before anything reads it.
+        SharedLightGrid.Flush();
         try { __state = new(true, permit, audit, SimulationRandom.Enter()); }
         catch (Exception error) { SharedColony.CancelTick(error); throw; }
         return true;
