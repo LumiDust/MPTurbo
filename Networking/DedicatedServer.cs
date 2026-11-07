@@ -355,8 +355,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                 PlayerId = peer.Id, Players = CapturePlayers(peer), Epoch = Epoch
             });
             peer.Joined = true; // No other broadcast can overtake Welcome on this peer's FIFO.
-            // Lockstep must not wait for a report that predates the join: seed it at the current tick so the
-            // timeline only stalls on peers that actually fell behind.
+            // Lockstep must not wait for a report that predates the join: seeding at the current tick keeps
+            // the timeline moving, and the catch-up path closes any real gap the peer later reports.
             if (_options.Lockstep) _peerAppliedTick[peer.Id] = Tick;
             if (isSimulation) BroadcastRoles();
             else BroadcastPlayers();
@@ -938,7 +938,11 @@ public sealed partial class DedicatedServer : IAsyncDisposable
                     count = Math.Min(count, budget);
                     var tick = count == 0 ? Tick : Interlocked.Add(ref _tick, count);
                     // Keep paused clients alive at the same watermark. Zero speed publishes no simulation debt.
-                    if (tick - lastBroadcast < 6 && count != 0) continue;
+                    // Broadcast tightly in lockstep: the peer may only tick up to the last published tick, so
+                    // a six-tick gap between messages made it block mid-frame and permanently drop those
+                    // ticks, which showed up as the colony running at 47 t/s instead of 60.
+                    var stride = _options.Lockstep ? 2 : 6;
+                    if (tick - lastBroadcast < stride && count != 0) continue;
                     lastBroadcast = tick;
                     foreach (var peer in _peers.Values)
                         if (peer.Joined) peer.TryQueue(new WireMessage { Type = "Tick", Tick = tick });

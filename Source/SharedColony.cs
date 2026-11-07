@@ -88,7 +88,12 @@ public static class SharedColony
         if (HeadlessRuntime.HoldLocalTicks || catchingUp || !Gating || TurboState.Authority.IsHeld
             || TurboState.Authority.Current.TimeSpeed == 0 || Find.TickManager?.Paused == true
             || Find.TickManager?.slower?.ForcedNormalSpeed == true) return;
-        var steps = CatchUpPlan.Steps(Session.Barrier.Backlog);
+        var backlog = Session.Barrier.Backlog;
+        // The published timeline deliberately runs a few ticks ahead of the slowest peer. That lead is
+        // pipeline depth, not a backlog: closing it made every peer simulate about seven times faster than
+        // real time, which is what "normal speed runs far too fast" was.
+        if (RoomConnection.LockstepRoom) backlog = Math.Max(0, backlog - NetworkProtocol.SimulationLeadTicks);
+        var steps = CatchUpPlan.Steps(backlog);
         if (steps == 0) return;
         catchingUp = true;
         var started = Clock.Now;
@@ -109,8 +114,15 @@ public static class SharedColony
     internal static bool TryBeginTick(TickManager manager, out SimulationTickGuard.Permit permit)
     {
         permit = default;
-        return Gating && !TurboState.Authority.IsHeld && TurboState.Authority.Current.TimeSpeed != 0
-            && !manager.Paused && tickGuard.TryBegin(manager.TicksGame, out permit);
+        if (!Gating || TurboState.Authority.IsHeld || TurboState.Authority.Current.TimeSpeed == 0
+            || manager.Paused) return false;
+        // The guard requires the game clock and the shared timeline to advance together, and they do, but
+        // only from the value they shared when the session started. If those values differed, the offset is
+        // constant forever: vanilla buckets long ticks by TicksGame % 2000, so the two peers run
+        // Plant.TickLong on different ticks and growth, rotting and hp drift apart. Aligning here costs one
+        // field write and keeps the two equal for every tick that follows.
+        if (manager.TicksGame != Session.Barrier.AppliedTick) SharedGameClock.Align(Session.Barrier.AppliedTick);
+        return tickGuard.TryBegin(manager.TicksGame, out permit);
     }
 
     internal static void CompleteTick(TickManager manager, SimulationTickGuard.Permit permit)

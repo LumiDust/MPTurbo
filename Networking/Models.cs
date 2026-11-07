@@ -9,6 +9,11 @@ public static class NetworkProtocol
     public const string ClientVersion = "0.6.0";
     public const int MaximumFrameLength = 4 * 1024 * 1024;
     public const int SnapshotChunkSize = 256 * 1024;
+
+    /// <summary>How many ticks the published timeline may run ahead of the slowest peer. This is pipeline
+    /// depth, not a backlog: a peer sitting inside it is keeping up, and must not try to close it, or it
+    /// simulates several times faster than real time.</summary>
+    public const int SimulationLeadTicks = 6;
 }
 
 /// <summary>Server-authoritative native time selection. Joining a room applies it by default.

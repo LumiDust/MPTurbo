@@ -13,7 +13,7 @@ public sealed partial class DedicatedServer
     private string? _requiredSimulationWorldId;
     public string? RequiredSimulationWorldId => Volatile.Read(ref _requiredSimulationWorldId);
     private sealed record SimulationProgress(Peer? Peer, long Epoch, int AppliedTick, bool Ready);
-    private const int SimulationLeadTicks = 6;
+    private const int SimulationLeadTicks = NetworkProtocol.SimulationLeadTicks;
 
     /// <summary>Admits the resident lockstep simulation through the same TCP and compatibility handshake
     /// as players. Its credential never leaves this process except on the loopback connection.</summary>
