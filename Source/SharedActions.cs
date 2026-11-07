@@ -25,7 +25,6 @@ namespace TurboTick;
 public static class SharedActions
 {
     internal static bool Applying;
-
     public static void ResetTickWork()
     {
         Applying = false;

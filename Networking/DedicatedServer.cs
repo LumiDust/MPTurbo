@@ -723,7 +723,8 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             var seed = Volatile.Read(ref _seed);
             foreach (var recipient in _peers.Values)
                 if (recipient.Joined)
-                    recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world, Seed = seed });
+                    recipient.Queue(new WireMessage { Type = "Started", Epoch = epoch, Tick = 0, WorldId = world.Id, Manifest = world, Seed = seed,
+                        Authoritative = _options.Authoritative && !recipient.IsSimulation });
             peer.Queue(new WireMessage { Type = "StartedAccepted", RequestId = message.RequestId, Epoch = epoch });
             await SaveCurrentStateLockedAsync(peer.Token).ConfigureAwait(false);
         }
@@ -880,7 +881,9 @@ public sealed partial class DedicatedServer : IAsyncDisposable
         {
             Type = "Started", Epoch = epoch, Tick = Tick, SnapshotTick = CheckpointTick,
             WorldId = world.Id, Manifest = world, Seed = Volatile.Read(ref _seed),
-            Authoritative = _options.Authoritative
+            // Only a real player peer becomes a display replica. The resident simulation connection
+            // must keep simulating, otherwise the authoritative host would freeze itself.
+            Authoritative = _options.Authoritative && !peer.IsSimulation
         });
         List<GameCommand> snapshot;
         lock (_history) snapshot = [.. _history];

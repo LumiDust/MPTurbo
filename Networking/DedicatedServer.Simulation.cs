@@ -80,4 +80,7 @@ public sealed partial class DedicatedServer
             return 0;
         return (int)Math.Clamp((long)progress.AppliedTick + SimulationLeadTicks - Tick, 0L, int.MaxValue);
     }
+
+    /// <summary>Diagnostic mirror of the budget that gates the published timeline.</summary>
+    public int SimulationTickBudgetForDiagnostics => SimulationTickBudget();
 }

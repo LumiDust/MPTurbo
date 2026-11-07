@@ -333,8 +333,9 @@ public static class SharedColony
             OnWorldLoadFailed("载入超时：120 秒内没有切换到共享存档");
         }
         if (!Gating) return;
-        // A display replica receives state in frames; replaying commands locally would fork it again.
-        if (AuthoritativeReplica.Frozen) return;
+        // A display replica still applies broadcast commands: they are the host's authoritative actions,
+        // and applying them locally keeps the replica correct between sparse frames. It only skips the
+        // command *capture* path, which is what would fork it.
         // While paused the game does not tick, so drain anything that became due.
         ApplyDue();
     }

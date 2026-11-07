@@ -34,7 +34,8 @@ internal static class ScribeBridge
 
     /// <summary>Applies an XML fragment previously produced by <see cref="Save"/>. References to other
     /// objects (a job target, a carried item) cannot resolve until every cross reference is resolved, so
-    /// that pass runs before the real loader state is restored.</summary>
+    /// that pass runs before the real loader state is restored. Identity fields are preserved: a fragment
+    /// that fails to resolve its def must not blank the live object, which would break drawing.</summary>
     internal static bool Load(IExposable value, string xml)
     {
         if (value is null || string.IsNullOrEmpty(xml) || Scribe.mode != LoadSaveMode.Inactive) return false;

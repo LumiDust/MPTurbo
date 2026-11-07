@@ -102,17 +102,37 @@ internal static class AuthoritativeReplica
         var thing = FindThing(state.Id);
         if (thing is null) return; // A creation frame that has not arrived yet; the next one carries it.
         var cell = new IntVec3(state.X, 0, state.Z);
-        if (thing.Position != cell) thing.Position = cell;
+        if (thing.Position != cell && cell.InBounds(thing.Map))
+        {
+            // Moving a spawned thing must go through the grid, or drawing looks up an empty cell.
+            thing.DeSpawn(DestroyMode.Vanish);
+            GenSpawn.Spawn(thing, cell, thing.Map, thing.Rotation, WipeMode.Vanish);
+        }
         var rotation = new Rot4(state.Rotation);
         if (thing.Rotation != rotation) thing.Rotation = rotation;
         if (thing.def.stackLimit > 1 && thing.stackCount != state.Stack) thing.stackCount = state.Stack;
         if (thing.def.useHitPoints && thing.HitPoints != state.HitPoints) thing.HitPoints = state.HitPoints;
         // Mod state rides along as the object's own Scribe XML; no per-mod handling is required.
         if (state.State is { Length: > 0 } xml && thing is IExposable exposable)
+            ApplyPreservingIdentity(thing, exposable, xml);
+    }
+
+    /// <summary>A Scribe fragment rewrites the def reference too. If that lookup cannot resolve, the def
+    /// would become null and every later draw would throw, so the identity is restored on failure.</summary>
+    private static void ApplyPreservingIdentity(Thing thing, IExposable exposable, string xml)
+    {
+        var def = thing.def;
+        var id = thing.thingIDNumber;
+        if (ScribeBridge.Load(exposable, xml))
         {
-            if (ScribeBridge.Load(exposable, xml)) StatesApplied++;
-            else StatesFailed++;
+            if (thing.def is null) thing.def = def;
+            if (thing.thingIDNumber != id) thing.thingIDNumber = id;
+            StatesApplied++;
+            return;
         }
+        thing.def = def;
+        thing.thingIDNumber = id;
+        StatesFailed++;
     }
 
     private static void RemoveThing(int id) => FindThing(id)?.Destroy(DestroyMode.Vanish);
@@ -141,10 +161,7 @@ internal static class AuthoritativeReplica
             if (!cell.InBounds(map)) return;
             GenSpawn.Spawn(thing, cell, map, rotation, WipeMode.Vanish);
             if (state.State is { Length: > 0 } xml && thing is IExposable exposable)
-            {
-                if (ScribeBridge.Load(exposable, xml)) StatesApplied++;
-                else StatesFailed++;
-            }
+                ApplyPreservingIdentity(thing, exposable, xml);
             Created++;
         }
         catch (Exception error)

@@ -436,7 +436,10 @@ internal static class HeadlessRuntime
                 lastFrameTick = Volatile.Read(ref lastFrameTick),
                 framesSent = Volatile.Read(ref framesSent),
                 peers = server?.PeerCount, joinedPeers = server?.JoinedPeerCount,
-                replicas = server?.DisplayReplicaCount
+                replicas = server?.DisplayReplicaCount,
+                held = TurboState.Authority.IsHeld, frozen = AuthoritativeReplica.Frozen,
+                holdLocal = HoldLocalTicks, timeSpeed = TurboState.Authority.Current.TimeSpeed,
+                budget = server?.SimulationTickBudgetForDiagnostics
             }, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(path + ".tmp", path, overwrite: true);
         }
