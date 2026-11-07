@@ -84,9 +84,41 @@ internal static class AuthoritativeReplica
             PruneMotions();
             Log.Message($"[TurboTick] 权威帧 {frame.Tick}：{frame.Pawns.Count} 个角色（滑动中 {SmoothCount()}），{frame.Changed?.Count ?? 0} 个物体变化，" +
                 $"新建 {Created} 失败 {CreateFailures} 缺Def {MissingDefs}，" +
-                $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，累计 {AppliedFrames} 帧。");
+                $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，" +
+                $"失去地图 {DetachCount()}，累计 {AppliedFrames} 帧。");
         }
     }
+
+    /// <summary>Objects left in the draw list with a null map: the exact condition behind the
+    /// GetSnowDepth NullReferenceException. Recovering any means a location field leaked through.</summary>
+    /// <summary>Live objects that lost their map. Destroyed objects linger in the section layer until the
+    /// next rebuild and are expected; anything still alive here means a location field leaked through.</summary>
+    private static int DetachCount()
+    {
+        var count = 0;
+        foreach (var map in Find.Maps)
+            foreach (var thing in map.listerThings.AllThings)
+            {
+                if (thing is not RimWorld.Plant plant || plant.Destroyed) continue;
+                if (plant.Map is not null && plant.Spawned && plant.def?.plant is not null) continue;
+                count++;
+                ReportBrokenPlant(plant);
+            }
+        return count;
+    }
+
+    private static readonly HashSet<int> BrokenLogged = [];
+
+    internal static void ReportBrokenPlant(RimWorld.Plant plant)
+    {
+        if (plant.Destroyed) return;
+        if (!BrokenLogged.Add(plant.thingIDNumber) || BrokenLogged.Count > 12) return;
+        Log.Warning($"[TurboTick] 跳过绘制 id={plant.thingIDNumber} def={plant.def?.defName} " +
+            $"graphicData={(plant.def?.graphicData is null ? "null" : "ok")} " +
+            $"defPlant={(plant.def?.plant is null ? "null" : "ok")} map={(plant.Map is null ? "null" : "ok")} " +
+            $"spawned={plant.Spawned} pos={plant.Position}");
+    }
+    private static int RespawnFailures;
 
     /// <summary>Drops interpolation entries for pawns that are gone, so a long session cannot leak them.</summary>
     private static void PruneMotions()
@@ -131,7 +163,12 @@ internal static class AuthoritativeReplica
             // object is respawned onto a null map and every later Print throws in GetSnowDepth.
             var rotationBefore = thing.Rotation;
             thing.DeSpawn(DestroyMode.Vanish);
-            GenSpawn.Spawn(thing, cell, map, rotationBefore, WipeMode.Vanish);
+            var respawned = GenSpawn.Spawn(thing, cell, map, rotationBefore, WipeMode.VanishOrMoveAside);
+            if (respawned is null || !thing.Spawned)
+            {
+                if (RespawnFailures++ < 8)
+                    Log.Warning($"[TurboTick] 重定位失败 {thing.def.defName} id={thing.thingIDNumber} -> {cell}");
+            }
         }
         var rotation = new Rot4(state.Rotation);
         if (thing.Rotation != rotation) thing.Rotation = rotation;
@@ -188,7 +225,16 @@ internal static class AuthoritativeReplica
             var cell = new IntVec3(state.X, 0, state.Z);
             var rotation = new Rot4(state.Rotation);
             if (!cell.InBounds(map)) return;
-            GenSpawn.Spawn(thing, cell, map, rotation, WipeMode.Vanish);
+            // Never WipeMode.Vanish here: the host may legitimately have two things in one cell, and
+            // destroying the receiver's copy to make room would silently desync the colony.
+            GenSpawn.Spawn(thing, cell, map, rotation, WipeMode.VanishOrMoveAside);
+            if (!thing.Spawned)
+            {
+                if (RespawnFailures++ < 8)
+                    Log.Warning($"[TurboTick] 新建后未落地 {state.Def} id={state.Id} -> {cell}");
+                thing.Destroy(DestroyMode.Vanish);
+                return;
+            }
             if (state.State is { Length: > 0 } xml && thing is IExposable exposable)
                 ApplyPreservingIdentity(thing, exposable, xml);
             Created++;
@@ -279,6 +325,22 @@ internal static class AuthoritativeReplica
         foreach (var motion in motions.Values)
             if (now - motion.Start < frameInterval) count++;
         return count;
+    }
+}
+
+/// <summary>Plant.Print reads Map, def and graphic through several paths and throws if any is missing.
+/// A replica can transiently hold such an object between a creation and its state, so printing is
+/// skipped and the real condition is reported instead of spamming the log once per section rebuild.</summary>
+[HarmonyPatch(typeof(RimWorld.Plant), nameof(RimWorld.Plant.Print))]
+internal static class ReplicaPlantPrintGuard
+{
+    private static bool Prefix(RimWorld.Plant __instance)
+    {
+        if (!AuthoritativeReplica.Frozen) return true;
+        if (__instance.Map is not null && __instance.Spawned && __instance.def?.graphicData is not null
+            && __instance.def.plant is not null) return true;
+        AuthoritativeReplica.ReportBrokenPlant(__instance);
+        return false;
     }
 }
 

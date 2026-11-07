@@ -59,6 +59,7 @@ public static class PatchInstaller
         Try(harmony, "shared-path-requests", typeof(SharedPathRequests));
         // Display-replica presentation: interpolated motion and a clock that follows the host.
         Try(harmony, "replica-draw-pos", typeof(ReplicaDrawPosPatch));
+        Try(harmony, "replica-plant-guard", typeof(ReplicaPlantPrintGuard));
         Try(harmony, "replica-clock", typeof(ReplicaClockPatch));
         if (SimulationDiagnostics.Enabled)
         {

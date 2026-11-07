@@ -34,8 +34,7 @@ internal static class ScribeBridge
 
     /// <summary>Applies an XML fragment previously produced by <see cref="Save"/>. References to other
     /// objects (a job target, a carried item) cannot resolve until every cross reference is resolved, so
-    /// that pass runs before the real loader state is restored. Identity fields are preserved: a fragment
-    /// that fails to resolve its def must not blank the live object, which would break drawing.</summary>
+    /// that pass runs before the real loader state is restored.</summary>
     internal static bool Load(IExposable value, string xml)
     {
         if (value is null || string.IsNullOrEmpty(xml) || Scribe.mode != LoadSaveMode.Inactive) return false;
@@ -48,6 +47,17 @@ internal static class ScribeBridge
         }
         var root = document.DocumentElement?.FirstChild;
         if (root is null) return false;
+        // The fragment carries the sender's def, id, map and position. Applying those to a live object
+        // assigns Map and Position directly, bypassing the thing grid: the object stays in the draw list
+        // with a null map and Plant.Print throws in GridsUtility.GetSnowDepth. Deleting the nodes is also
+        // wrong, because ScribeExtractor.ValueFromNode(null, default) then writes IntVec3.Invalid and
+        // map = -1. The identity nodes are overwritten with the receiver's own serialised values instead,
+        // which keeps the round trip consistent for every field type.
+        var thing = value as Thing;
+        if (thing is not null) KeepReceiverIdentity(value, root);
+        var mapBefore = thing?.Map;
+        var positionBefore = thing?.Position ?? IntVec3.Invalid;
+        var rotationBefore = thing?.Rotation ?? Rot4.North;
         var loader = Scribe.loader;
         var previousParent = loader.curXmlParent;
         var previousPath = loader.curPathRelToParent;
@@ -75,6 +85,43 @@ internal static class ScribeBridge
             loader.curXmlParent = previousParent;
             loader.curPathRelToParent = previousPath;
             Scribe.mode = LoadSaveMode.Inactive;
+            if (thing is not null) RestoreSpawn(thing, mapBefore, positionBefore, rotationBefore);
+        }
+    }
+
+    /// <summary>Thing.ExposeData deliberately clears the map index on load, because a real save re-registers
+    /// every thing afterwards. A live object must be put back on the grid here, or it keeps drawing while
+    /// its Map is null and Plant.Print throws in GridsUtility.GetSnowDepth.</summary>
+    private static void RestoreSpawn(Thing thing, Map? map, IntVec3 position, Rot4 rotation)
+    {
+        if (map is null || thing.Destroyed) return;
+        if (thing.Spawned && thing.Map == map) return;
+        if (thing.Spawned) thing.DeSpawn(DestroyMode.Vanish);
+        if (!position.IsValid || !position.InBounds(map)) return;
+        GenSpawn.Spawn(thing, position, map, rotation, WipeMode.VanishOrMoveAside);
+    }
+
+    /// <summary>Fields that locate the object. They must describe the receiver, never the sender.</summary>
+    private static readonly string[] IdentityFields = ["def", "id", "pos", "map", "rot"];
+
+    /// <summary>Replaces the locating nodes in the incoming fragment with the receiver's own serialised
+    /// values, so Scribe reads back exactly what the live object already is.</summary>
+    private static void KeepReceiverIdentity(IExposable value, XmlNode target)
+    {
+        var own = Save(value);
+        if (string.IsNullOrEmpty(own)) return;
+        var document = new XmlDocument();
+        try { document.LoadXml("<r>" + own + "</r>"); }
+        catch (XmlException) { return; }
+        var source = document.DocumentElement?.FirstChild;
+        if (source is null) return;
+        foreach (var name in IdentityFields)
+        {
+            var from = source[name];
+            if (from is null) continue;
+            var to = target[name];
+            if (to is null) continue;
+            if (to is XmlElement element) element.InnerText = from.InnerText;
         }
     }
 
