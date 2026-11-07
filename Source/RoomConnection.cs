@@ -346,6 +346,10 @@ internal static class RoomConnection
 
     public static bool IsCheckpointOwner => client?.IsCheckpointOwner == true;
 
+    /// <summary>This peer's id in the room, or 0 before the handshake. Used to recognise the echo of a
+    /// command this peer already applied locally.</summary>
+    public static long LocalPeerId => client?.PlayerId ?? 0;
+
     /// <summary>True when the server owns the simulation. Replicas follow frames and every peer is frozen,
     /// so cross-peer hash comparison has nothing to compare.</summary>
     public static bool AuthoritativeRoom { get; private set; }

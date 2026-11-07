@@ -772,7 +772,7 @@ public sealed partial class DedicatedServer : IAsyncDisposable
             lock (_commandGate)
             {
                 var assigned = new GameCommand(Interlocked.Increment(ref _commandSequence), Volatile.Read(ref _tick) + 2,
-                    command.Kind, command.Payload);
+                    command.Kind, command.Payload, command.OriginPeer);
                 lock (_history)
                 {
                     if (_history.Count >= MaxHistory)

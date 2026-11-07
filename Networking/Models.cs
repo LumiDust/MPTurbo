@@ -144,7 +144,7 @@ public sealed record SnapshotManifest(string Id, long Length, int ChunkSize, IRe
 public sealed record SnapshotChunk(string Id, int Index, byte[] Data, string Sha256);
 
 /// <summary>One deterministic gameplay command. Sequence and tick are assigned by the server.</summary>
-public sealed record GameCommand(long Sequence, int Tick, string Kind, byte[] Payload);
+public sealed record GameCommand(long Sequence, int Tick, string Kind, byte[] Payload, long OriginPeer = 0);
 
 /// <summary>Builds the same manifest the server would compute, so a client can verify before upload.</summary>
 public static class SnapshotBuilder

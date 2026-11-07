@@ -358,7 +358,15 @@ public static class SharedColony
         var due = Session.Commands.TakeThrough(Session.Barrier.AppliedTick);
         if (due.Count == 0) return;
         using var random = SimulationRandom.Enter();
-        foreach (var command in due) SharedActions.Apply(command);
+        var self = RoomConnection.LocalPeerId;
+        foreach (var command in due)
+        {
+            // A capture patch runs after vanilla already performed the action, so this peer has applied it
+            // once at the moment of the click. Applying the broadcast on top of that placed two blueprints
+            // and restarted ordered jobs, which is what a single click turned into a divergence.
+            if (self != 0 && command.OriginPeer == self) continue;
+            SharedActions.Apply(command);
+        }
     }
 
     public static void Update()

@@ -382,7 +382,7 @@ public sealed class DedicatedClient : IAsyncDisposable
         var session = ConnectedSession();
         await session.Connection.WriteAsync(new WireMessage
         {
-            Type = "Command", Command = new GameCommand(0, 0, kind, payload)
+            Type = "Command", Command = new GameCommand(0, 0, kind, payload, PlayerId)
         }, session.Token).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
     }
