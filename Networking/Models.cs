@@ -90,7 +90,11 @@ public sealed record SessionInfo(long Epoch, int Tick, int Seed, string WorldId,
 
 /// <summary>One pawn exactly as the authoritative host simulates it. Display replicas apply this instead
 /// of running their own simulation, so they cannot diverge.</summary>
-public sealed record ReplicaPawn(int Id, int Map, float X, float Z, int Rotation, string? Job, float Health);
+/// <summary>One pawn exactly as the authoritative host simulates it. Display replicas apply this instead
+/// of simulating. A predictive peer also needs the current job and its targets: two simulations that only
+/// agree on position still walk to different places, because the AI underneath them chose differently.</summary>
+public sealed record ReplicaPawn(int Id, int Map, float X, float Z, int Rotation, string? Job, float Health,
+    int JobACell = -1, int JobAThing = -1, int JobBCell = -1, int JobBThing = -1);
 
 /// <summary>One non-pawn object as the host simulates it. Only objects that changed since the previous
 /// frame are sent, so a colony with tens of thousands of plants does not stream every tick.

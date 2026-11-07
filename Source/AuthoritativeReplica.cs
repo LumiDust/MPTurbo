@@ -79,7 +79,12 @@ internal static class AuthoritativeReplica
         lastFrameArrival = arrival;
         LastFrameTick = frame.Tick;
         AppliedFrames++;
-        SharedColony.Session.Barrier.Observe(frame.Tick);
+        // A predictive peer must publish its OWN clock, not the host's. Observing the host tick told the
+        // barrier the peer was caught up while the local simulation sat 2400 ticks behind, so no catch-up
+        // ever ran and every position comparison was between two different moments in time.
+        SharedColony.Session.Barrier.Observe(Predictive
+            ? Find.TickManager?.TicksGame ?? frame.Tick
+            : frame.Tick);
         foreach (var state in frame.Pawns) ApplyPawn(state);
         // Bound the per-frame object work by wall time: a burst of changes must never block the render
         // thread long enough for Windows to declare the window hung. Leftovers are dropped, because the
@@ -110,9 +115,14 @@ internal static class AuthoritativeReplica
                 $"新建 {Created} 失败 {CreateFailures} 缺Def {MissingDefs}，" +
                 $"Scribe 状态 成功 {StatesApplied} / 失败 {StatesFailed}，" +
                 $"失去地图 {DetachCount()}，帧间隔 最差 {worstGap:0.00}s / 停顿 {hitchCount} 次，超预算丢弃 {DroppedWork}，" +
-                $"校正 {corrections}，累计 {AppliedFrames} 帧。");
+                $"校正 {corrections}，对齐工作 {jobAlignments}/失败 {jobAlignmentFailures}，时钟偏 {worstTickOffset} tick，平均漂移 {(driftSamples == 0 ? 0f : driftSum / driftSamples):0.00} 格 / 最差 {worstDrift:0.00} 格，" +
+                $"累计 {AppliedFrames} 帧。");
             hitchCount = 0;
             worstGap = 0f;
+            worstTickOffset = 0;
+            worstDrift = 0f;
+            driftSum = 0f;
+            driftSamples = 0;
         }
     }
 
@@ -289,10 +299,18 @@ internal static class AuthoritativeReplica
         var target = new Vector3(state.X, 0f, state.Z);
         if (Predictive)
         {
-            // Only correct real drift. Snapping to every frame would undo the local pather and bring back
-            // the stutter the predictive path exists to remove.
-            if ((pawn.DrawPos - target).MagnitudeHorizontal() <= CorrectionRadius) return;
+            // Two simulations can only be compared at the same tick. If the local clock has drifted away
+            // from the host's, every position looks wrong even when both sides agree, so the offset is
+            // measured separately from the actual distance.
+            var localTick = Find.TickManager?.TicksGame ?? 0;
+            var tickOffset = localTick - LastFrameTick;
+            if (Math.Abs(tickOffset) > Math.Abs(worstTickOffset)) worstTickOffset = tickOffset;
+            var drift = (pawn.DrawPos - target).MagnitudeHorizontal();
+            driftSum += drift;
+            driftSamples++;
+            if (drift <= CorrectionRadius) return;
             corrections++;
+            if (drift > worstDrift) worstDrift = drift;
         }
         var now = Clock.Now;
         if (motions.TryGetValue(state.Id, out var motion))
@@ -311,12 +329,57 @@ internal static class AuthoritativeReplica
         if (cell.InBounds(pawn.Map) && pawn.Position != cell) pawn.Position = cell;
         var rotation = new Rot4(state.Rotation);
         if (pawn.Rotation != rotation) pawn.Rotation = rotation;
+        if (Predictive) AlignJob(pawn, state);
     }
+
+    /// <summary>A predictive peer that only matches positions still walks somewhere else, because the AI
+    /// picked a different job. When the host's current job differs, the local pawn is told to do the same
+    /// thing with the same targets, so the two simulations make the same decision instead of being fought
+    /// apart by position correction.</summary>
+    private static void AlignJob(Pawn pawn, ReplicaPawn state)
+    {
+        if (state.Job is not { Length: > 0 } jobName || pawn.jobs is null || pawn.Dead) return;
+        if (pawn.CurJobDef?.defName == jobName) return;
+        var def = DefDatabase<JobDef>.GetNamedSilentFail(jobName);
+        if (def is null) return;
+        var a = DecodeTarget(state.JobACell, state.JobAThing);
+        if (!a.IsValid) return;
+        var b = DecodeTarget(state.JobBCell, state.JobBThing);
+        try
+        {
+            var job = b.IsValid ? JobMaker.MakeJob(def, a, b) : JobMaker.MakeJob(def, a);
+            pawn.jobs.TryTakeOrderedJob(job);
+            jobAlignments++;
+        }
+        catch (Exception error)
+        {
+            if (jobAlignmentFailures++ < 8)
+                Log.Warning("[TurboTick] 工作对齐失败 " + jobName + "：" + error.GetType().Name);
+        }
+    }
+
+    private static LocalTargetInfo DecodeTarget(int cell, int thingId)
+    {
+        if (thingId > 0)
+        {
+            var thing = FindThing(thingId);
+            if (thing is not null) return new LocalTargetInfo(thing);
+        }
+        // x * 1000 + z, so the divisor recovers the column.
+        return cell < 0 ? LocalTargetInfo.Invalid : new LocalTargetInfo(new IntVec3(cell / 1000, 0, cell % 1000));
+    }
+
+    private static int jobAlignments;
+    private static int jobAlignmentFailures;
 
     /// <summary>How far a predictive peer may drift before the host's position wins. Roughly one cell:
     /// smaller than that is ordinary pathing noise, larger means the two simulations disagree.</summary>
     private static readonly float CorrectionRadius = 1.5f;
     private static int corrections;
+    private static int worstTickOffset;
+    private static float worstDrift;
+    private static float driftSum;
+    private static int driftSamples;
 
     private sealed class Motion
     {

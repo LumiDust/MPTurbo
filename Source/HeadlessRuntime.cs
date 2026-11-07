@@ -140,6 +140,10 @@ internal static class HeadlessRuntime
 
     private static readonly Dictionary<int, (int Map, int X, int Z, int Rotation, int Stack, int Hits)> lastThings = [];
 
+    /// <summary>Cell packed into one int so a job target travels without a nested object per pawn.</summary>
+    private static int EncodeCell(LocalTargetInfo? target) =>
+        target is { } value && value.IsValid ? value.Cell.x * 1000 + value.Cell.z : -1;
+
     /// <summary>Only objects that moved, changed stack, or took damage since the previous frame. The first
     /// frame after a load establishes the baseline and sends nothing, because the replica already holds
     /// the identical snapshot. Later frames also report objects that disappeared.</summary>
@@ -207,7 +211,9 @@ internal static class HeadlessRuntime
                     var pos = pawn.DrawPos;
                     pawns.Add(new ReplicaPawn(pawn.thingIDNumber, map.uniqueID, pos.x, pos.z,
                         pawn.Rotation.AsInt, pawn.CurJobDef?.defName,
-                        pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f));
+                        pawn.health?.summaryHealth?.SummaryHealthPercent ?? 0f,
+                        EncodeCell(pawn.CurJob?.targetA), pawn.CurJob?.targetA.Thing?.thingIDNumber ?? -1,
+                        EncodeCell(pawn.CurJob?.targetB), pawn.CurJob?.targetB.Thing?.thingIDNumber ?? -1));
                 }
             var (changed, removed, created) = DiffThings();
             var sent = server.BroadcastFrame(new AuthoritativeFrame(tick, pawns, changed, removed, null, created));
