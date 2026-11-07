@@ -65,6 +65,8 @@ public static class PatchInstaller
         Try(harmony, "background-prefs", typeof(BackgroundPrefsPatch));
         // Vanilla autosave's LongEventHandler freezes the shared timeline once per in-game day.
         Try(harmony, "shared-autosave", typeof(SharedAutosaveSkip));
+        // A replica has no local path, so vanilla would draw its path line to the origin.
+        Try(harmony, "replica-path-line", typeof(ReplicaPathLineSkip));
         Try(harmony, "replica-clock", typeof(ReplicaClockPatch));
         if (SimulationDiagnostics.Enabled)
         {
