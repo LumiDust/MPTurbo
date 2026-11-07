@@ -815,9 +815,14 @@ await Test("controller-only room requires explicit host to publish its world", a
 
 await Test("action codec round-trips every player action and rejects malformed payloads", () =>
 {
-    var design = TurboTick.Simulation.CommandCodec.DesignationCommand("Mine", 0, 12, 34, 7);
-    Check(TurboTick.Simulation.CommandCodec.TryDecodeDesignation(design.Payload, out var def, out var map, out var x, out var z)
-        && def == "Mine" && map == 0 && x == 12 && z == 34, "designation");
+    var design = TurboTick.Simulation.CommandCodec.DesignationCommand("Mine", 0, 12, 34, -1, 7);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeDesignation(design.Payload, out var def, out var map, out var x, out var z, out var thing)
+        && def == "Mine" && map == 0 && x == 12 && z == 34 && thing == -1, "designation");
+    // Thing-keyed designations (HarvestPlant, Hunt, Tame) must survive the round trip with their target,
+    // because the receiver indexes those by Thing and a cell lookup throws.
+    var harvest = TurboTick.Simulation.CommandCodec.DesignationCommand("HarvestPlant", 0, 7, 9, 4242, 8);
+    Check(TurboTick.Simulation.CommandCodec.TryDecodeDesignation(harvest.Payload, out _, out _, out _, out _, out var target)
+        && target == 4242, "thing-keyed designation keeps its target");
     var blueprint = TurboTick.Simulation.CommandCodec.BlueprintCommand("Wall", "WoodLog", 1, 5, 6, 2, 8);
     Check(TurboTick.Simulation.CommandCodec.TryDecodeBlueprint(blueprint.Payload, out var b, out var stuff, out var bm, out var bx, out var bz, out var rot)
         && b == "Wall" && stuff == "WoodLog" && bm == 1 && bx == 5 && bz == 6 && rot == 2, "blueprint");
@@ -837,7 +842,7 @@ await Test("action codec round-trips every player action and rejects malformed p
     Check(TurboTick.Simulation.CommandCodec.TryDecodeBillAdd(bill.Payload, out var bb, out var br, out var bc2) && bb == 555 && br == "CookMealSimple" && bc2 == 10, "bill add");
     var area = TurboTick.Simulation.CommandCodec.AreaAssignCommand(42, 2, 16);
     Check(TurboTick.Simulation.CommandCodec.TryDecodeAreaAssign(area.Payload, out var ap, out var aa) && ap == 42 && aa == 2, "area assign");
-    Check(!TurboTick.Simulation.CommandCodec.TryDecodeDesignation("broken"u8.ToArray(), out _, out _, out _, out _), "reject short payload");
+    Check(!TurboTick.Simulation.CommandCodec.TryDecodeDesignation("broken"u8.ToArray(), out _, out _, out _, out _, out _), "reject short payload");
     Check(!TurboTick.Simulation.CommandCodec.TryDecodeDraft("1|2"u8.ToArray(), out _, out _), "reject invalid flag");
     return Task.CompletedTask;
 });

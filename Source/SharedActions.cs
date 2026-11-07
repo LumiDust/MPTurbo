@@ -36,8 +36,10 @@ public static class SharedActions
     {
         if (Applying || !SharedColony.Session.AcceptsInput) return;
         if (!designation.target.IsValid || designation.designationManager?.map is not { } map) return;
+        // Thing-keyed designations must carry their target, not the cell it happens to occupy.
+        var thingId = designation.target.HasThing ? designation.target.Thing.thingIDNumber : -1;
         Publish(CommandCodec.DesignationCommand(designation.def.defName, map.Index,
-            designation.target.Cell.x, designation.target.Cell.z, SharedColony.NextSequence()));
+            designation.target.Cell.x, designation.target.Cell.z, thingId, SharedColony.NextSequence()));
     }
 
     public static void CaptureRemoveDesignation(Designation designation)
@@ -201,10 +203,19 @@ public static class SharedActions
 
     private static void ApplyDesignation(byte[] payload)
     {
-        if (!CommandCodec.TryDecodeDesignation(payload, out var defName, out var mapIndex, out var x, out var z)) return;
+        if (!CommandCodec.TryDecodeDesignation(payload, out var defName, out var mapIndex, out var x, out var z, out var thingId)) return;
         var def = DefDatabase<DesignationDef>.GetNamedSilentFail(defName);
         var map = Find.Maps.FirstOrDefault(m => m.Index == mapIndex);
         if (def == null || map == null) return;
+        // A Thing-keyed designation cannot be queried by cell; ask the manager through the same index it
+        // uses internally, otherwise the lookup throws and the whole shared tick is cancelled.
+        if (thingId > 0)
+        {
+            var thing = map.listerThings.AllThings.FirstOrDefault(t => t.thingIDNumber == thingId);
+            if (thing is null || map.designationManager.DesignationOn(thing, def) != null) return;
+            map.designationManager.AddDesignation(new Designation(thing, def));
+            return;
+        }
         var cell = new IntVec3(x, 0, z);
         if (!cell.InBounds(map) || map.designationManager.DesignationAt(cell, def) != null) return;
         map.designationManager.AddDesignation(new Designation(new LocalTargetInfo(cell), def));

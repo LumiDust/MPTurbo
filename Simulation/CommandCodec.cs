@@ -24,8 +24,11 @@ public static class CommandCodec
     public const string BillDelete = "bill-delete";
     public const string AreaAssign = "area-assign";
 
-    public static GameCommand DesignationCommand(string defName, int map, int x, int z, long sequence) =>
-        new(sequence, 0, Designation, Encoding.UTF8.GetBytes($"{defName}|{map}|{x}|{z}"));
+    /// <summary>The target thing id is part of the payload because several designations (HarvestPlant,
+    /// Hunt, Tame, Mine) are indexed by Thing only. Sending just a cell made the receiver look a location
+    /// up in a Thing-keyed index, which throws and faulted the whole simulation.</summary>
+    public static GameCommand DesignationCommand(string defName, int map, int x, int z, int targetThingId, long sequence) =>
+        new(sequence, 0, Designation, Encoding.UTF8.GetBytes($"{defName}|{map}|{x}|{z}|{targetThingId}"));
 
     public static GameCommand RemoveDesignationCommand(string defName, int map, int x, int z, int targetThingId, long sequence) =>
         new(sequence, 0, RemoveDesignation, Encoding.UTF8.GetBytes($"{defName}|{map}|{x}|{z}|{targetThingId}"));
@@ -68,13 +71,14 @@ public static class CommandCodec
 
     // ---------- Decoders ----------
 
-    public static bool TryDecodeDesignation(byte[] payload, out string defName, out int map, out int x, out int z)
+    public static bool TryDecodeDesignation(byte[] payload, out string defName, out int map, out int x, out int z, out int thingId)
     {
         defName = "";
-        map = x = z = 0;
-        if (!TryDecode(payload, 4, out var p)) return false;
+        map = x = z = thingId = 0;
+        if (!TryDecode(payload, 5, out var p)) return false;
         defName = p[0];
-        return defName.Length > 0 && int.TryParse(p[1], out map) && int.TryParse(p[2], out x) && int.TryParse(p[3], out z);
+        return defName.Length > 0 && int.TryParse(p[1], out map) && int.TryParse(p[2], out x)
+            && int.TryParse(p[3], out z) && int.TryParse(p[4], out thingId);
     }
 
     public static bool TryDecodeRemoveDesignation(byte[] payload, out string defName, out int map, out int x, out int z, out int thingId)
