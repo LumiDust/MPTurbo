@@ -6,12 +6,14 @@ using static TurboTick.TurboTickSettings;
 
 namespace TurboTick;
 
-/// <summary>Compact local room display, below the colonist bar on the left. The original right-hand
-/// global controls and native speed controls keep their own space.</summary>
+/// <summary>Compact local room display. It starts at the lower left, clear of the top-left resource
+/// readout, and can be dragged anywhere; the corner is remembered in the mod settings.</summary>
 public static class TurboHud
 {
     private static bool expanded = true;
     private static Vector2 playerScroll;
+    private static bool dragging;
+    private static Vector2 dragOffset;
     private static readonly Color Background = new(0.045f, 0.065f, 0.085f, 0.94f);
     private static readonly Color Border = new(0.20f, 0.29f, 0.35f, 0.95f);
     private static readonly Color Accent = new(0.35f, 0.85f, 0.77f);
@@ -28,9 +30,19 @@ public static class TurboHud
             var width = Math.Max(220, Math.Min(314, UI.screenWidth - 24));
             var listHeight = Math.Min(164, count * 40);
             var height = expanded ? 144 + listHeight : 36;
-            return new Rect(12, Math.Min(108, Math.Max(12, UI.screenHeight - height - 64)), width, height);
+            var settings = TurboTickMod.Settings;
+            if (settings is not null && settings.hudX >= 0f && settings.hudY >= 0f)
+                return new Rect(ClampX(settings.hudX, width), ClampY(settings.hudY, height), width, height);
+            // Default: the right edge, vertically centred. The left side belongs to the resource readout
+            // and the terrain readout; the right edge only carries notices at top and bottom.
+            var x = Math.Max(12f, UI.screenWidth - width - 12f);
+            var y = Math.Max(72f, (UI.screenHeight - height) / 2f);
+            return new Rect(x, y, width, height);
         }
     }
+
+    private static float ClampX(float x, float width) => Mathf.Clamp(x, 0f, Math.Max(0f, UI.screenWidth - width));
+    private static float ClampY(float y, float height) => Mathf.Clamp(y, 0f, Math.Max(0f, UI.screenHeight - Math.Min(height, 36f)));
 
     internal static bool Contains(Vector2 point) => Visible && Panel.Contains(point);
 
@@ -59,6 +71,31 @@ public static class TurboHud
             Widgets.DrawBoxSolid(new Rect(panel.x + 12, panel.y + 14, 6, 6), statusColor);
             var title = new Rect(panel.x + 24, panel.y + 6, panel.width - 120, 25);
             Widgets.LabelEllipses(title, T("TurboTick_HudTitle", players.Count));
+            // Drag by the title strip; the whole card moves and the corner is persisted.
+            var handle = new Rect(panel.x, panel.y, Math.Max(40f, panel.width - 100f), 32f);
+            if (Event.current.type == EventType.MouseDown && handle.Contains(Event.current.mousePosition))
+            {
+                dragging = true;
+                dragOffset = Event.current.mousePosition - new Vector2(panel.x, panel.y);
+                Event.current.Use();
+            }
+            else if (dragging && Event.current.type == EventType.MouseDrag)
+            {
+                var moved = Event.current.mousePosition - dragOffset;
+                var target = TurboTickMod.Settings;
+                if (target is not null)
+                {
+                    target.hudX = ClampX(moved.x, panel.width);
+                    target.hudY = ClampY(moved.y, panel.height);
+                }
+                Event.current.Use();
+            }
+            else if (dragging && Event.current.type == EventType.MouseUp)
+            {
+                dragging = false;
+                TurboTickMod.Settings?.Write();
+                Event.current.Use();
+            }
             var toggle = new Rect(panel.xMax - 94, panel.y + 5, 25, 26);
             TooltipHandler.TipRegion(toggle, T(expanded ? "TurboTick_HudCollapse" : "TurboTick_HudExpand"));
             if (Widgets.ButtonText(toggle, expanded ? "−" : "+")) expanded = !expanded;

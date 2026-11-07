@@ -440,8 +440,10 @@ internal static class HeadlessRuntime
                 held = TurboState.Authority.IsHeld, frozen = AuthoritativeReplica.Frozen,
                 holdLocal = HoldLocalTicks, timeSpeed = TurboState.Authority.Current.TimeSpeed,
                 budget = server?.SimulationTickBudgetForDiagnostics,
-                paused = Find.TickManager?.Paused, tickBusy = SharedColony.TickExecuting,
-                slow = Find.TickManager?.slower?.ForcedNormalSpeed
+                // Find.TickManager dereferences Current.Game in 1.7, so it must not be read without one.
+                paused = Current.Game is null ? (bool?)null : Find.TickManager?.Paused,
+                tickBusy = SharedColony.TickExecuting,
+                slow = Current.Game is null ? (bool?)null : Find.TickManager?.slower?.ForcedNormalSpeed
             }, new JsonSerializerOptions { WriteIndented = true }));
             File.Move(path + ".tmp", path, overwrite: true);
         }

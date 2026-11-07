@@ -23,6 +23,9 @@ public class TurboTickSettings : ModSettings
     public string PlayerName = "Player";
     /// <summary>Developer aid: join the configured server as soon as a colony is loaded.</summary>
     public bool autoConnect = false;
+    /// <summary>Remembered HUD corner. Negative means "use the default anchor".</summary>
+    public float hudX = -1f;
+    public float hudY = -1f;
 
     public override void ExposeData()
     {
@@ -38,6 +41,8 @@ public class TurboTickSettings : ModSettings
         Scribe_Values.Look(ref ServerPort, "serverPort", "30572");
         Scribe_Values.Look(ref PlayerName, "playerName", "Player");
         Scribe_Values.Look(ref autoConnect, "autoConnect", false);
+        Scribe_Values.Look(ref hudX, "hudX", -1f);
+        Scribe_Values.Look(ref hudY, "hudY", -1f);
     }
 
     public void Draw(Rect area)
